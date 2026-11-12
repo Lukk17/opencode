@@ -37,6 +37,7 @@ import { MAX_STEPS_PROMPT } from "./max-steps.js"
 
 const CONTINUE_AFTER_OUTPUT_LIMIT =
   "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces."
+const REPLY_REJECTED = "Your last reply was not shown to the user. Write the reply again and fix this:"
 
 type DrainInput = Parameters<Interface["drain"]>[0]
 
@@ -246,6 +247,7 @@ const layer = Layer.effect(
       let recoverOverflow = true
       let recoverContinuation = true
       let retryAttempt: number | undefined
+      let replyAttempt = 1
       while (true) {
         // Reuse boundary preparation once; retries refresh context without delivering more input.
         const loaded = initial ?? (yield* prepareContext(sessionID).pipe(Effect.flatMap(context.load)))
@@ -289,6 +291,7 @@ const layer = Layer.effect(
               request: prepared.request,
               options: prepared.options,
               retry: prepared.retry,
+              reply: prepared.reply,
               executeTool: prepared.executeTool,
             })),
           )
@@ -306,6 +309,7 @@ const layer = Layer.effect(
             executeTool: (call) => plugins.awaitActivation.pipe(Effect.andThen(prepared.executeTool(call))),
           },
           retryAttempt,
+          replyAttempt,
           retry: (cause, error, proposed) =>
             retry.decide({
               cause,
@@ -372,6 +376,11 @@ const layer = Layer.effect(
               })
             if (outcome.needsContinuation) return true
             yield* bus.publish(SessionEvent.Synthetic, { sessionID, text: CONTINUE_AFTER_OUTPUT_LIMIT })
+            assistantMessageID = SessionMessage.ID.create()
+          }),
+          Rejected: Effect.fnUntraced(function* (outcome) {
+            replyAttempt++
+            yield* bus.publish(SessionEvent.Synthetic, { sessionID, text: `${REPLY_REJECTED}\n${outcome.note}` })
             assistantMessageID = SessionMessage.ID.create()
           }),
           Compacted: Effect.fnUntraced(function* () {

@@ -16,12 +16,18 @@ export type Hooks<Spec, Failures extends Record<keyof Spec, unknown> = Record<ke
   callback: (input: Spec[Name]) => Effect.Effect<void, Failures[Name]>,
 ) => Effect.Effect<Registration, never, Scope.Scope>
 
-export type ModelHooks<Spec, Failures extends Record<keyof Spec, unknown> = Record<keyof Spec, never>> = <
-  Name extends keyof Spec,
->(
+export type ModelHooks<
+  Spec,
+  Failures extends Record<keyof Spec, unknown> = Record<keyof Spec, never>,
+  Options extends { readonly [Name in keyof Spec]?: ModelHookOptions } = {},
+> = <Name extends keyof Spec>(
   name: Name,
   callback: (input: Spec[Name]) => Effect.Effect<void, Failures[Name]>,
-  options?: Spec[Name] extends { readonly model: unknown } ? ModelHookOptions : never,
+  options?: Spec[Name] extends { readonly model: unknown }
+    ? Name extends keyof Options
+      ? Options[Name]
+      : ModelHookOptions
+    : never,
 ) => Effect.Effect<Registration, never, Scope.Scope>
 
 export type Transform<Input> = (callback: (input: Input) => void) => Effect.Effect<Registration, never, Scope.Scope>

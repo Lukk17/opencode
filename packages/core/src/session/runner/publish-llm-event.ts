@@ -26,6 +26,8 @@ type Input = {
   readonly pendingSnapshot?: Effect.Effect<Snapshot.ID | undefined>
   readonly started: number
   readonly assistantMessageID: SessionMessage.ID
+  /** Publish only the start of text parts and keep their text until `releaseText`, or until a tool input starts. */
+  readonly holdText?: boolean
 }
 
 const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : { value })
@@ -269,7 +271,20 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
         }),
       true,
     )
-  const text = contentFragments("text", SessionEvent.Text)
+  const held: Array<{ readonly text: string; readonly native?: SessionMessage.Native }> = []
+  const hold: { ordinal?: number; open: boolean } = { open: false }
+  const text = input.holdText
+    ? fragments(
+        "text",
+        (_id, value, _ordinal, native) =>
+          Effect.sync(() => {
+            hold.open = false
+            held.push({ text: value, native })
+          }),
+        undefined,
+        true,
+      )
+    : contentFragments("text", SessionEvent.Text)
   const reasoning = contentFragments("reasoning", SessionEvent.Reasoning)
   const toolInput = fragments("tool input", (id, value) =>
     Effect.gen(function* () {
@@ -293,6 +308,22 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
     yield* reasoning.publishPending()
   })
 
+  /** Ends the started text part with the held text joined, or with `replacement` when given. */
+  const releaseText = Effect.fnUntraced(function* (replacement?: string) {
+    if (held.length === 0 || hold.open || hold.ordinal === undefined) return
+    const parts = held.splice(0)
+    const joined = parts.map((part) => part.text).join("")
+    const text = replacement ?? joined
+    yield* bus.publish(SessionEvent.Text.Ended, {
+      sessionID: input.sessionID,
+      assistantMessageID: yield* currentAssistantMessageID(),
+      ordinal: hold.ordinal,
+      text,
+      native: parts.length === 1 && text === joined ? parts[0].native : undefined,
+    })
+    hold.ordinal = undefined
+  })
+
   const flushFragments = Effect.fnUntraced(function* () {
     yield* text.flush()
     yield* reasoning.flush()
@@ -313,6 +344,7 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
       providerExecuted: event.providerExecuted === true,
     }
     tools.set(event.id, tool)
+    yield* releaseText()
     yield* toolInput.start(event.id)
     yield* publishPendingDeltas()
     yield* bus.publish(SessionEvent.Tool.Input.Started, {
@@ -439,6 +471,11 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
         outputStarted = true
         const startedTextOrdinal = yield* text.start(event.id, native(event.providerMetadata))
         yield* publishPendingDeltas()
+        if (input.holdText) {
+          hold.open = true
+          if (hold.ordinal !== undefined) return
+          hold.ordinal = startedTextOrdinal
+        }
         yield* bus.publish(SessionEvent.Text.Started, {
           sessionID: input.sessionID,
           assistantMessageID: yield* startAssistant(),
@@ -599,6 +636,9 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
     publish: (event: LLMEvent): Effect.Effect<void> => publish(event),
     progress,
     toolExecution,
+    releaseText,
+    /** The held text parts joined, or undefined when no text is held. */
+    heldText: () => (held.length === 0 ? undefined : held.map((part) => part.text).join("")),
     flush,
     failAssistant,
     failTool,

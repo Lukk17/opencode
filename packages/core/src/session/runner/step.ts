@@ -37,6 +37,7 @@ export type Outcome = Data.TaggedEnum<{
   RecoverFull: {}
   Compacted: {}
   OutputLimit: { readonly needsContinuation: boolean }
+  Rejected: { readonly note: string }
 }>
 export const Outcome = Data.taggedEnum<Outcome>()
 
@@ -53,6 +54,8 @@ interface Input {
   readonly prepared: Omit<SessionModelRequest.Prepared, "event">
   /** Set when this attempt runs because an earlier one in the step scheduled a retry. */
   readonly retryAttempt?: number
+  /** The reply attempt, raised each time an `experimental.reply.before` hook rejects the reply. Defaults to 1. */
+  readonly replyAttempt?: number
   readonly retry: (
     cause: AIError,
     error: SessionError.Error,
@@ -66,6 +69,7 @@ interface Input {
 const TOOLS_INTERRUPTED = { type: "aborted", message: "Tool execution interrupted" } as const
 const STEP_INTERRUPTED = { type: "aborted", message: "Step interrupted" } as const
 const RESULT_MISSING = { type: "tool.result-missing", message: "Provider did not return a tool result" } as const
+const REPLY_ATTEMPTS = 3
 
 /** Captures Location-scoped dependencies without introducing another service or execution loop. */
 export const make = Effect.gen(function* () {
@@ -97,6 +101,7 @@ export const make = Effect.gen(function* () {
       providerMetadataKey: input.model.model.route.providerMetadataKey ?? input.model.model.provider,
       pendingSnapshot: Fiber.join(pendingStartSnapshot),
       started,
+      holdText: input.prepared.reply !== undefined,
     })
     const toolRuns: Array<{
       readonly call: ToolCall
@@ -286,6 +291,29 @@ export const make = Effect.gen(function* () {
           yield* publisher.failIncompleteTools()
         }
 
+        const settled = publisher.record()
+        const needsContinuation = input.prepared.request.toolChoice?.type !== "none" && settled.needsContinuation
+        const held = publisher.heldText()
+        const review =
+          input.prepared.reply && held !== undefined && Exit.isSuccess(stream) && !settled.failure && !needsContinuation
+            ? yield* restore(
+                input.prepared.reply({
+                  sessionID: input.sessionID,
+                  agent: input.agent,
+                  model: input.model.ref,
+                  text: held,
+                }),
+              ).pipe(Effect.exit)
+            : undefined
+        if (review && Exit.isFailure(review))
+          yield* publisher.failAssistant(
+            Cause.hasInterrupts(review.cause) ? STEP_INTERRUPTED : toSessionError(Cause.squash(review.cause)),
+          )
+        const reviewed = review && Exit.isSuccess(review) ? review.value : undefined
+        const note =
+          reviewed?.reject !== undefined && (input.replyAttempt ?? 1) < REPLY_ATTEMPTS ? reviewed.reject : undefined
+        yield* publisher.releaseText(note === undefined ? reviewed?.text : "")
+
         const record = publisher.record()
         if (record.finish || record.failure) {
           const startSnapshot = yield* Fiber.join(pendingStartSnapshot)
@@ -314,6 +342,9 @@ export const make = Effect.gen(function* () {
             })
         }
 
+        if (review && Exit.isFailure(review)) return yield* Effect.failCause(review.cause)
+        if (note !== undefined) return Outcome.Rejected({ note })
+
         if (llmError && retry?.retry && tools.declines.length === 0 && !tools.interrupted)
           return Outcome.Retry({ error: llmError, decision: retry, freshAssistant: true })
 
@@ -325,7 +356,6 @@ export const make = Effect.gen(function* () {
         if (tools.interrupted && tools.failure) return yield* Effect.failCause(tools.failure)
         if (tools.interrupted && Exit.isFailure(joined)) return yield* Effect.failCause(joined.cause)
         if (record.failure) return yield* new StepFailedError({ error: record.failure })
-        const needsContinuation = input.prepared.request.toolChoice?.type !== "none" && record.needsContinuation
         if (record.finish?.finish === "length") return Outcome.OutputLimit({ needsContinuation })
         return Outcome.Completed({ needsContinuation })
       }),

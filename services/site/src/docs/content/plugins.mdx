@@ -88,6 +88,31 @@ Two built-in plugins ignore removals so that a repository cannot switch off
 `opencode.provider.opencode`, the Console connection that delivers organization
 policy.
 
+## Review replies
+
+A plugin can check each finished reply with the experimental `experimental.reply.before`
+[session hook](/build/plugins/effect#sessions-1) before you see it. The hook gets the reply `text`, the session ID, the
+agent, and the model. It can let the reply through, change `text`, or set `reject` to a note for the model. After a
+rejection, the model gets the note and writes the reply again. After 3 rejected tries, OpenCode shows the last reply
+anyway.
+
+```ts
+effect: (ctx) =>
+  Effect.gen(function* () {
+    yield* ctx.session.hook("experimental.reply.before", (event) =>
+      Effect.sync(() => {
+        if (event.text.includes("TODO")) event.reject = "Finish the work instead of leaving a TODO."
+      }),
+    )
+  }),
+```
+
+- The hook runs only for replies, never for compaction, title, or other background requests. Subagent replies run it
+  too, unless the plugin passes `{ subagents: false }` as the third argument of `ctx.session.hook`.
+- In a session that at least one registered callback checks, reply text appears when the reply is finished instead of
+  while the model writes it. Other sessions stream as usual. Text written before a tool call is not checked.
+- The [output style](/config#output-style) `rules` setting uses this hook.
+
 ## Manage
 
 Install, list, check, update, or remove global package plugins with the CLI.

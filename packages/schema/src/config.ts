@@ -13,6 +13,7 @@ import { ConfigFormatter } from "./config/formatter.js"
 import { ConfigLSP } from "./config/lsp.js"
 import { ConfigMCP } from "./config/mcp.js"
 import { ConfigModel } from "./config/model.js"
+import { ConfigOutputStyle } from "./config/output-style.js"
 import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
@@ -96,6 +97,10 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   instructions: Schema.String.pipe(Schema.Array, optional).annotate({
     description: "Additional paths or URLs supplying ambient instructions",
+  }),
+  output_style: ConfigOutputStyle.Info.pipe(optional).annotate({
+    description:
+      "Output style added after OpenCode's own system parts of requests for replies to the user while the experimental output_style flag is on",
   }),
   references: ConfigReference.Info.pipe(optional).annotate({
     description: "Named local directories or Git repositories available as external context",

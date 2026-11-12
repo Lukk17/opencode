@@ -7630,3 +7630,152 @@ describe("SessionRunnerLLM", () => {
     expect(defect.message).toBe("Tool input delta before start: call-1")
   })
 })
+
+describe("SessionRunnerLLM experimental.reply.before", () => {
+  const assistantTexts = (messages: readonly SessionMessage.Info[]) =>
+    messages.flatMap((message) =>
+      message.type === "assistant" ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])) : [],
+    )
+  const eventTypesUntilStepEnd = (s: Scenario) =>
+    s.bus.subscribe().pipe(
+      Stream.takeUntil((event) => event.type === SessionEvent.Step.Ended.type),
+      Stream.map((event) => event.type),
+      Stream.runCollect,
+      Effect.forkScoped({ startImmediately: true }),
+    )
+  const rejectWhile = (rejected: (call: number) => boolean) => {
+    const seen: string[] = []
+    const callback = (event: { text: string; reject?: string }) =>
+      Effect.sync(() => {
+        seen.push(event.text)
+        if (rejected(seen.length)) event.reject = "Use a numbered list."
+      })
+    return { seen, callback }
+  }
+
+  scenario("holds the reply and lets it through unchanged", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const review = rejectWhile(() => false)
+    yield* hooks.register("session", "experimental.reply.before", review.callback)
+    const events = yield* eventTypesUntilStepEnd(s)
+    yield* s.llm.push(TestLLM.text("Plain reply", "text"))
+    yield* s.runPrompt("Answer")
+
+    expect(review.seen).toEqual(["Plain reply"])
+    expect(Array.from(yield* Fiber.join(events))).not.toContain(SessionEvent.Text.Delta.type)
+    expect(assistantTexts(yield* s.context)).toEqual(["Plain reply"])
+  })
+
+  scenario("replaces the reply with changed text", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    yield* hooks.register("session", "experimental.reply.before", (event) =>
+      Effect.sync(() => {
+        event.text = "Changed reply"
+      }),
+    )
+    yield* s.llm.push(TestLLM.text("Plain reply", "text"))
+    yield* s.runPrompt("Answer")
+
+    expect(assistantTexts(yield* s.context)).toEqual(["Changed reply"])
+  })
+
+  scenario("asks the model again with the note after a rejection", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const review = rejectWhile((call) => call === 1)
+    yield* hooks.register("session", "experimental.reply.before", review.callback)
+    yield* s.llm.push(TestLLM.text("First reply", "first"), TestLLM.text("Second reply", "second"))
+    yield* s.runPrompt("Answer")
+
+    expect(review.seen).toEqual(["First reply", "Second reply"])
+    expect(s.requests).toHaveLength(2)
+    expect(JSON.stringify(s.requests[1])).toContain("Use a numbered list.")
+    expect(JSON.stringify(s.requests[1])).not.toContain("First reply")
+    expect(assistantTexts(yield* s.context)).toEqual(["", "Second reply"])
+  })
+
+  scenario("shows the reply after the third rejection", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const review = rejectWhile(() => true)
+    yield* hooks.register("session", "experimental.reply.before", review.callback)
+    yield* s.llm.push(
+      TestLLM.text("First reply", "first"),
+      TestLLM.text("Second reply", "second"),
+      TestLLM.text("Third reply", "third"),
+    )
+    yield* s.runPrompt("Answer")
+
+    expect(s.requests).toHaveLength(3)
+    expect(assistantTexts(yield* s.context)).toEqual(["", "", "Third reply"])
+  })
+
+  scenario("keeps text before a tool call when the route ends the text after the call", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    yield* hooks.register("session", "experimental.reply.before", () => Effect.void)
+    yield* s.llm.push(
+      TestLLM.toolCalls(
+        LLMEvent.textStart({ id: "text-0" }),
+        LLMEvent.textDelta({ id: "text-0", text: "Checking first" }),
+        LLMEvent.toolCall({ id: "call-1", name: "echo", input: { text: "hi" } }),
+        LLMEvent.textEnd({ id: "text-0" }),
+      ),
+      TestLLM.stop(),
+    )
+    yield* s.runPrompt("Answer")
+
+    const assistant = (yield* s.context).find((message) => message.type === "assistant")
+    expect(
+      assistant?.type === "assistant"
+        ? assistant.content.map((part) => (part.type === "text" ? `text:${part.text}` : part.type))
+        : [],
+    ).toEqual(["text:Checking first", "tool"])
+  })
+
+  scenario("publishes the held reply and ends the step when interrupted during the hook", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const started = yield* Deferred.make<void>()
+    yield* hooks.register("session", "experimental.reply.before", () =>
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    )
+    yield* s.admit("Answer")
+    yield* s.llm.push(TestLLM.text("Plain reply", "text"))
+    yield* s.resume.pipe(Effect.forkScoped)
+    yield* Deferred.await(started)
+    yield* s.session.interrupt(sessionID)
+    yield* s.session.wait(sessionID)
+
+    expect((yield* s.context).find((message) => message.type === "assistant")).toMatchObject({
+      error: { type: "aborted" },
+      content: [{ type: "text", text: "Plain reply" }],
+    })
+  })
+
+  scenario("keeps the step number when the reply is rejected", function* (s) {
+    const agents = yield* Agent.Service
+    yield* agents.transform((editor) =>
+      editor.update(Agent.ID.make("build"), (agent) => {
+        agent.steps = 2
+      }),
+    )
+    const hooks = yield* PluginHooks.Service
+    const review = rejectWhile((call) => call === 1)
+    yield* hooks.register("session", "experimental.reply.before", review.callback)
+    yield* s.llm.push(
+      TestLLM.text("Rejected reply", "rejected"),
+      TestLLM.toolCall("call-1", "echo", { text: "after" }),
+      TestLLM.text("Final reply", "final"),
+    )
+    yield* s.runPrompt("Answer")
+
+    expect(s.requests).toHaveLength(3)
+    expect(s.requests[1]?.toolChoice).toBeUndefined()
+    expect(s.requests[2]?.toolChoice).toMatchObject({ type: "none" })
+  })
+
+  scenario("streams the reply when no hook is registered", function* (s) {
+    const events = yield* eventTypesUntilStepEnd(s)
+    yield* s.llm.push(TestLLM.text("Plain reply", "text"))
+    yield* s.runPrompt("Answer")
+
+    expect(Array.from(yield* Fiber.join(events))).toContain(SessionEvent.Text.Delta.type)
+  })
+})

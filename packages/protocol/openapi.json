@@ -16585,6 +16585,9 @@
               "type": "string"
             }
           },
+          "output_style": {
+            "$ref": "#/components/schemas/Config.OutputStyle"
+          },
           "references": {
             "type": "object",
             "additionalProperties": {
@@ -16675,6 +16678,9 @@
                 "type": "boolean"
               },
               "mcp_events": {
+                "type": "boolean"
+              },
+              "output_style": {
                 "type": "boolean"
               },
               "part_rows": {
@@ -17083,6 +17089,46 @@
             "additionalProperties": false
           }
         },
+        "additionalProperties": false
+      },
+      "Config.OutputStyle": {
+        "type": "object",
+        "properties": {
+          "subagents": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Style text"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Config.OutputStyleRule"
+            }
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "Config.OutputStyleRule": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regular expression checked against the reply, where ^ and $ match at each line"
+          },
+          "must": {
+            "type": "string",
+            "enum": ["match", "not-match"],
+            "description": "Whether the reply must match the pattern or must not match it"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["pattern", "must"],
         "additionalProperties": false
       },
       "Config.Patch": {

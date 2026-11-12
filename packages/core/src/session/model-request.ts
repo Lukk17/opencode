@@ -22,6 +22,7 @@ import type {
   SessionCompaction,
   SessionContext,
   SessionGenerate,
+  SessionReply,
   SessionRequest,
   SessionRequestKind,
   SessionRequestMessage,
@@ -72,6 +73,8 @@ export interface Prepared<Event = SessionRequest> {
   readonly request: LLMRequest
   readonly options: StreamOptions
   readonly retry: (event: PluginHooks.Domains["session"]["retry"]) => Effect.Effect<void>
+  /** Runs the `experimental.reply.before` hooks. Present only for a primary request while one is registered. */
+  readonly reply?: (event: SessionReply) => Effect.Effect<SessionReply>
   /** Runs a tool call against the tools this request advertised. */
   readonly executeTool: (
     input: Parameters<Tool.Snapshot["execute"]>[0],
@@ -372,6 +375,9 @@ export const layer = Layer.effect(
         model: route === base.model.route ? base.model : LanguageModel.update(base.model, { route }),
         headers: Object.keys(modelHook.headers).length === 0 ? undefined : modelHook.headers,
       }
+      const subagent = session.parentID !== undefined
+      const hasReplyHooks =
+        kind === "primary" && (yield* hooks.has("session", "experimental.reply.before", model.ref.providerID, subagent))
       const hasHttpHooks =
         (yield* hooks.has("session", "http.request", model.ref.providerID)) ||
         (yield* hooks.has("session", "http.response", model.ref.providerID))
@@ -438,6 +444,9 @@ export const layer = Layer.effect(
         options: { ...(http ? { http } : {}), ...(webSocket ? { webSocket } : {}) },
         retry: (event: Parameters<Prepared["retry"]>[0]) =>
           hooks.trigger("session", "retry", event).pipe(Effect.asVoid),
+        ...(hasReplyHooks
+          ? { reply: (event: SessionReply) => hooks.trigger("session", "experimental.reply.before", event, subagent) }
+          : {}),
         // Permission.assert and the question tool throw declines as defects so tools cannot
         // catch them and turn a "no" into model-visible output. Recover them here as failures,
         // including declines a tool rethrew and its wrapper attached to a Tool.Error, as Promise

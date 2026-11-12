@@ -1,10 +1,9 @@
 export * as PluginHooks from "./hooks.js"
 
 import type { AISDKHooks } from "@opencode/plugin/effect/aisdk"
-import type { SessionHooks } from "@opencode/plugin/effect/session"
+import type { SessionHooks, SessionReplyOptions } from "@opencode/plugin/effect/session"
 import type { ShellHooks } from "@opencode/plugin/effect/shell"
 import type { ToolFailures, ToolHooks } from "@opencode/plugin/effect/tool"
-import type { ModelHookOptions } from "@opencode/plugin/effect/registration"
 import type { PermissionHooks } from "@opencode/plugin/effect/permission"
 import { Context, Effect, Layer, Scope } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
@@ -30,7 +29,9 @@ interface Failures extends Record<keyof Domains, unknown> {
 }
 
 type Callback<Event, Error> = (event: Event) => Effect.Effect<void, Error>
-type Entry = { readonly callback: Function; readonly options?: ModelHookOptions }
+type Entry = { readonly callback: Function; readonly options?: SessionReplyOptions }
+
+const skips = (entry: Entry, subagent?: boolean) => subagent === true && entry.options?.subagents === false
 
 const eventProviderID = (event: unknown) => {
   if (typeof event !== "object" || event === null || !("model" in event)) return undefined
@@ -44,17 +45,19 @@ export interface Interface {
     domain: Domain,
     name: keyof Domains[Domain] & keyof Failures[Domain],
     providerID?: string,
+    subagent?: boolean,
   ) => Effect.Effect<boolean>
   readonly register: <Domain extends keyof Domains, Name extends keyof Domains[Domain] & keyof Failures[Domain]>(
     domain: Domain,
     name: Name,
     callback: Callback<Domains[Domain][Name], Failures[Domain][Name]>,
-    options?: ModelHookOptions,
+    options?: SessionReplyOptions,
   ) => Effect.Effect<State.Registration, never, Scope.Scope>
   readonly trigger: <Domain extends keyof Domains, Name extends keyof Domains[Domain] & keyof Failures[Domain]>(
     domain: Domain,
     name: Name,
     event: Domains[Domain][Name],
+    subagent?: boolean,
   ) => Effect.Effect<Domains[Domain][Name], Failures[Domain][Name]>
 }
 
@@ -85,19 +88,22 @@ const layer = Layer.effect(
       },
     )
 
-    const trigger: Interface["trigger"] = Effect.fnUntraced(function* (domain, name, event) {
+    const trigger: Interface["trigger"] = Effect.fnUntraced(function* (domain, name, event, subagent) {
       for (const entry of callbacks.get(key(domain, name)) ?? []) {
         if (entry.options?.providerID !== undefined && entry.options.providerID !== eventProviderID(event)) continue
+        if (skips(entry, subagent)) continue
         const result: Effect.Effect<void, Failures[typeof domain][typeof name]> = entry.callback(event)
         yield* result
       }
       return event
     })
 
-    const has: Interface["has"] = (domain, name, providerID) =>
+    const has: Interface["has"] = (domain, name, providerID, subagent) =>
       Effect.sync(() =>
         (callbacks.get(key(domain, name)) ?? []).some(
-          (entry) => entry.options?.providerID === undefined || entry.options.providerID === providerID,
+          (entry) =>
+            (entry.options?.providerID === undefined || entry.options.providerID === providerID) &&
+            !skips(entry, subagent),
         ),
       )
 

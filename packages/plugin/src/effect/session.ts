@@ -9,7 +9,7 @@ import type { SessionError } from "@opencode/schema/session-error"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { TokenUsage } from "@opencode/schema/token-usage"
 import type { JsonSchema, Types } from "effect"
-import type { ModelHooks } from "./registration.js"
+import type { ModelHookOptions, ModelHooks } from "./registration.js"
 
 export interface SessionPrompt {
   readonly sessionID: Session.ID
@@ -157,6 +157,29 @@ export interface SessionRetry {
 }
 
 /**
+ * The finished text of a step that would end a primary reply, before it is stored or shown. Compaction, title and
+ * generate requests never run this hook. Set `text` to change the reply, or set `reject` to a note for the model,
+ * which then writes the reply again. After 3 rejected tries the last reply is shown anyway. While at least one
+ * callback is registered, reply text is held until this hook has run instead of streamed. Experimental.
+ */
+export interface SessionReply {
+  readonly sessionID: Session.ID
+  readonly agent: Agent.ID
+  readonly model: Model.Ref
+  text: string
+  reject?: string
+}
+
+export interface SessionReplyOptions extends ModelHookOptions {
+  /** Set to false to skip subagent sessions: the callback does not run for them, and their text is not held for it. */
+  readonly subagents?: boolean
+}
+
+export interface SessionHookOptions {
+  readonly "experimental.reply.before": SessionReplyOptions
+}
+
+/**
  * Background work still running for the idle Session or one of its descendants. `sessionID` is
  * the Session that owns the job: the idle Session itself, or a descendant such as a subagent child.
  */
@@ -213,6 +236,7 @@ export interface SessionHooks {
   readonly "experimental.ws.send": SessionWebSocketSend
   readonly "experimental.ws.receive": SessionWebSocketReceive
   readonly retry: SessionRetry
+  readonly "experimental.reply.before": SessionReply
   readonly "experimental.idle": SessionIdle
 }
 
@@ -235,5 +259,5 @@ export type SessionDomain = Pick<
   | "context"
 > &
   Pick<ExperimentalSessionApi<unknown>, "wait" | "instructions"> & {
-    readonly hook: ModelHooks<SessionHooks>
+    readonly hook: ModelHooks<SessionHooks, Record<keyof SessionHooks, never>, SessionHookOptions>
   }

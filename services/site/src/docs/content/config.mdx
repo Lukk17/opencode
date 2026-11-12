@@ -690,6 +690,60 @@ value.
 }
 ```
 
+### Output style
+
+Set `output_style` to `true` to add a writing style, such as "short answers, no tables", to the agent's replies to
+you. Defaults to `false`. The style itself goes in `text` under the top-level `output_style` key. With the flag on
+and no `output_style` key, nothing changes.
+
+```jsonc
+{
+  "experimental": {
+    "output_style": true,
+  },
+  "output_style": {
+    "text": "Answer in short, plain sentences. Do not use tables.",
+  },
+}
+```
+
+- OpenCode adds the style text after its own system parts only in requests for replies to you, including replies
+  after a compaction. Requests that are not replies to you get no style: compaction itself, background requests such
+  as the goal reviewer and warming, and title requests.
+- To keep the style in its own file, use a [file reference](#files), such as `"text": "{file:./style.md}"`. OpenCode
+  loads the file again when it changes. A missing file gives an empty text, and OpenCode skips the style.
+- A project `output_style` replaces the global one as a whole.
+- Subagent requests get no style unless `subagents` is `true`.
+
+Add `rules` to check each reply against regular expressions. Each rule has a `pattern`, a `must` value of `match` or
+`not-match`, and an optional `message` for the model. A reply that breaks a rule is not shown. The model gets a note
+that names each broken rule and writes the reply again. After 3 tries, OpenCode shows the last reply anyway. This
+example forbids the em dash and requires a line that starts with `Running:`.
+
+```jsonc
+{
+  "experimental": {
+    "output_style": true,
+  },
+  "output_style": {
+    "text": "End every reply with a line that starts with Running: and lists running tasks.",
+    "rules": [
+      { "pattern": "\u2014", "must": "not-match", "message": "Do not use the em dash." },
+      { "pattern": "^Running:", "must": "match", "message": "End with a line that starts with Running:." },
+    ],
+  },
+}
+```
+
+- In a `pattern`, `^` and `$` match at the start and end of each line. OpenCode skips a pattern that is not a valid
+  regular expression and logs a warning.
+- Rules check the same replies as the style text: replies to you, and subagent replies only when `subagents` is
+  `true`.
+- In the sessions the rules check, reply text appears when the reply is finished instead of while the model writes
+  it. Other sessions stream as usual.
+- OpenCode reads `rules`, `subagents`, and the flag at startup to decide which sessions to hold. After you add the
+  first rule, turn the flag on, or change `subagents`, restart OpenCode. Changes to existing rules apply at once.
+
 ### Deprecated policies
 
 `experimental.policies` is deprecated. Use top-level [`policies`](/policies) instead. The old key still works and

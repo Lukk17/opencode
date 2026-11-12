@@ -374,6 +374,8 @@ export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigCompactionPercent = string
 
+export type ConfigOutputStyleRule = { pattern: string; must: "match" | "not-match"; message?: string }
+
 export type ConfigWorktree = { directory: string }
 
 export type ConfigModelReasoning =
@@ -990,6 +992,8 @@ export type VcsInfo = { provider?: string; branch: VcsBranch }
 export type WebSearchProvider = { id: WebSearchID; name: string }
 
 export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMeter; monthly: UsageLimitsMeter }
+
+export type ConfigOutputStyle = { subagents?: boolean; text: string; rules?: Array<ConfigOutputStyleRule> }
 
 export type ConfigModelCapabilities = {
   tools?: boolean
@@ -2526,6 +2530,7 @@ export type ConfigEntry =
           }
         }
         instructions?: Array<string>
+        output_style?: ConfigOutputStyle
         references?: {
           [x: string]:
             | string
@@ -2595,6 +2600,7 @@ export type ConfigEntry =
           artifacts?: boolean
           console_watches?: boolean
           mcp_events?: boolean
+          output_style?: boolean
           part_rows?: boolean
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number
