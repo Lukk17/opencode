@@ -20,6 +20,7 @@ import { ConfigReference } from "./config/reference.js"
 import { ConfigWebSearch } from "./config/websearch.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
 import { ConfigWatcher } from "./config/watcher.js"
+import { ConfigSessionLinks } from "./config/session-links.js"
 import { ConfigWarming } from "./config/warming.js"
 import { ConfigWorktree } from "./config/worktree.js"
 
@@ -41,6 +42,10 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   share: Schema.Literals(["manual", "auto", "disabled"]).pipe(optional).annotate({
     description: "Control whether sessions may be shared manually, automatically, or not at all",
+  }),
+  session_links: ConfigSessionLinks.Info.pipe(optional).annotate({
+    description:
+      "Settings for labelled session links in assistant replies while the experimental session_links flag is on",
   }),
   enterprise: Schema.Struct({
     url: Schema.String.pipe(optional),

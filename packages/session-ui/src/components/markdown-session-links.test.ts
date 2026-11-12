@@ -1,6 +1,11 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { markSessionLinks, sessionReferenceClipboardText, setupSessionLinks } from "./markdown-session-links"
+import {
+  labelledSessionLinkID,
+  markSessionLinks,
+  sessionReferenceClipboardText,
+  setupSessionLinks,
+} from "./markdown-session-links"
 
 const first = "ses_0123456789abcdefghijklmnop"
 
@@ -127,4 +132,21 @@ test("copied text writes each selected reference as its source instead of its ti
   plain.selectNodeContents(root.querySelectorAll("p")[1]!)
   expect(sessionReferenceClipboardText(root, [plain])).toBeUndefined()
   root.remove()
+})
+
+test("a labelled session link opens its target only while the label shows no other session ID", () => {
+  const href = `session:${first}`
+  expect(
+    [
+      [href, "the review"],
+      [href, first],
+      [href, `see ${second} now`],
+      [href, `@session:${second}`],
+      [href, `${second.slice(0, 8)}\u200b${second.slice(8)}`],
+      [href, "the\u202e review"],
+      ["session:ses_123", "the review"],
+      [`SESSION:${first}`, "the review"],
+      [first, "the review"],
+    ].map(([value, label]) => labelledSessionLinkID(value, label)),
+  ).toEqual([first, first, undefined, undefined, undefined, undefined, undefined, undefined, undefined])
 })

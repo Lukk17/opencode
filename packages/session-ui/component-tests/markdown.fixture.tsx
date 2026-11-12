@@ -22,6 +22,9 @@ export { MarkdownWorkerDisposedError } from "../src/components/markdown-worker"
 
 export { preloadMarkdown }
 
+/** Session IDs the fixture's markdown asked to open, in order. */
+export const opened: string[] = []
+
 // Inline code naming one of these is a file link; any other path stays plain code.
 const existingFiles = new Set(["src/file.ts", "new/file.ts"])
 
@@ -32,6 +35,8 @@ export async function mountMarkdown(options: {
   images?: boolean
   synchronousFiles?: boolean
   localFileExists?: MarkdownLocalFileExists
+  /** Whether the host opens sessions. Opened IDs go to `opened`. */
+  sessionLinks?: boolean
 }) {
   if (options.cached) await preloadMarkdown(options.text, "markdown-test")
   const host = document.createElement("div")
@@ -81,6 +86,7 @@ export async function mountMarkdown(options: {
               options.localFileExists?.(path) ??
               (options.synchronousFiles ? existingFiles.has(path) : Promise.resolve(existingFiles.has(path)))
             }
+            openSession={options.sessionLinks ? (id) => opened.push(id) : undefined}
           >
             <Show when={visible()}>
               <Markdown

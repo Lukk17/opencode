@@ -621,7 +621,9 @@ These are useful for:
   workflows.
 </Callout>
 
-All experimental settings live under the `experimental` key:
+Experimental flags and the older experimental settings live under the `experimental` key. A newer experimental
+feature keeps its value settings in a top-level key of its own, such as [`session_links`](#session-links), while its
+flag stays under `experimental`:
 
 ```jsonc title="opencode.jsonc"
 {
@@ -689,6 +691,31 @@ value.
   },
 }
 ```
+
+### Session links
+
+The web and desktop apps open labelled session links, such as `[the review](session:ses_...)`, in assistant replies.
+Clicking the label or pressing Enter on it opens that session in a tab.
+
+The model writes these links only when it is told it may. To tell it, turn on the `session_links` flag and set
+`session_links.instruction` to `true`. OpenCode then adds one short instruction to the system prompt of every agent
+request: the model may link a subagent session it started or knows, may link files by a relative path such as
+`[label](src/file.ts#L10)`, and must not invent session IDs. The flag is off by default in releases.
+
+```jsonc
+{
+  "experimental": {
+    "session_links": true,
+  },
+  "session_links": {
+    "instruction": true,
+  },
+}
+```
+
+- Only `session:` followed by a complete session ID makes a session link. A link whose label contains any other
+  session ID opens nothing, so a label cannot hide where it goes. The label must be plain text or simple formatting
+  such as code, emphasis, or bold, and the target session ID shows when you hover the link.
 
 ### Deprecated policies
 

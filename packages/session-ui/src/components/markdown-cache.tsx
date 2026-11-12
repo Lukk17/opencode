@@ -10,6 +10,7 @@ import {
 } from "./markdown-cache-machine"
 import { abortParseMarkdown, markdownWorkerDisposed, startParseMarkdown } from "./markdown-worker"
 import { localImagePath, localLinkPath } from "./markdown-image"
+import { sessionLinkTarget } from "./markdown-session-links"
 
 export type { MarkdownCacheEntry } from "./markdown-cache-machine"
 
@@ -52,10 +53,25 @@ if (typeof window !== "undefined" && purifier.isSupported) {
     ADD_ATTR: ["d", "viewBox", "preserveAspectRatio", "xmlns", "target"],
   })
   purifier.addHook("beforeSanitizeAttributes", (node) => {
+    if (node instanceof Element) {
+      node.removeAttribute("data-local-link")
+      node.removeAttribute("data-session-link")
+      node.removeAttribute("data-session-link-active")
+    }
+
     if (node instanceof HTMLAnchorElement) {
       // Local file links never navigate the document; the host decides how to open them.
-      node.removeAttribute("data-local-link")
-      const path = localLinkPath(node.getAttribute("href") ?? "")
+      const href = node.getAttribute("href") ?? ""
+      const session = sessionLinkTarget(node)
+
+      if (session) {
+        node.setAttribute("data-session-link", session)
+        node.removeAttribute("href")
+
+        return
+      }
+
+      const path = localLinkPath(href)
 
       if (!path) return
       node.setAttribute("data-local-link", path)

@@ -1293,3 +1293,86 @@ story("keeps the browser copy for selections that leave the Markdown", async ({ 
   expect(copied.html).toBe("")
   expect(copied.text).toBe("")
 })
+
+const sessionID = "ses_0123456789abcdefghijklmnop"
+
+for (const host of [true, false])
+  story(
+    `opens labelled session links only while the host opens sessions, ${host ? "with" : "without"} a host`,
+    async ({ page }) => {
+      await page.evaluate(
+        async (input) => {
+          const { mountMarkdown } = await import(input.fixture)
+          await mountMarkdown({
+            text: `Read [the review](session:${input.sessionID}) first.`,
+            sessionLinks: input.host,
+          })
+        },
+        { fixture, sessionID, host },
+      )
+      const harness = page.getByTestId("markdown-fixture")
+      const link = harness.locator('[data-component="markdown"] a', { hasText: "the review" })
+      await expect(harness.locator('[data-component="markdown"]')).toHaveAttribute("data-markdown-ready", "")
+
+      expect(
+        await link.evaluate((anchor) => ["href", "role", "tabindex", "title"].map((name) => anchor.getAttribute(name))),
+      ).toEqual(host ? [null, "link", "0", sessionID] : [null, null, null, null])
+      await link.click()
+      await link.focus()
+      await page.keyboard.press("Enter")
+      expect(await page.evaluate(async (fixture) => (await import(fixture)).opened, fixture)).toEqual(
+        host ? [sessionID, sessionID] : [],
+      )
+    },
+  )
+
+story("marks only well-formed session hrefs whose label is plain text or simple formatting", async ({ page }) => {
+  const other = "ses_abcdefghijklmnopqrstuvwxyz"
+  const formatted = "<code>auth</code> <em>the</em> <strong>review</strong> <del>old</del> <s>gone</s>"
+
+  const result = await page.evaluate(
+    async (input) => {
+      const { sanitizeMarkdown } = await import(input.fixture)
+
+      return [
+        `<a href="session:${input.sessionID}" target="_blank">the review</a>`,
+        `<a data-session-link="${input.sessionID}">forged</a>`,
+        `<a href="https://example.com" data-session-link="${input.other}">web</a>`,
+        `<a href="session:${input.sessionID}" aria-label="${input.other}">the review</a>`,
+        `<a href="session:${input.sessionID}"><span title="${input.other}">the review</span></a>`,
+        `<a href="session:${input.sessionID}" class="external-link">${input.formatted}</a>`,
+      ].map((html) => sanitizeMarkdown(html))
+    },
+    { fixture, sessionID, other, formatted },
+  )
+
+  expect(result).toEqual([
+    `<a target="_blank" data-session-link="${sessionID}" rel="noopener noreferrer">the review</a>`,
+    "<a>forged</a>",
+    '<a href="https://example.com">web</a>',
+    `<a aria-label="${other}">the review</a>`,
+    `<a><span title="${other}">the review</span></a>`,
+    `<a class="external-link" data-session-link="${sessionID}">${formatted}</a>`,
+  ])
+})
+
+story("keeps code labels on session links as plain code that opens the session", async ({ page }) => {
+  await page.evaluate(
+    async (input) => {
+      const { mountMarkdown } = await import(input.fixture)
+      await mountMarkdown({
+        text: `See [\`auth-review\`](session:${input.sessionID}) and [\`https://example.com\`](session:${input.sessionID}).`,
+        sessionLinks: true,
+      })
+    },
+    { fixture, sessionID },
+  )
+  const markdown = page.getByTestId("markdown-fixture").locator('[data-component="markdown"]')
+  const links = markdown.locator("a[data-session-link]")
+  await expect(markdown).toHaveAttribute("data-markdown-ready", "")
+
+  await expect(links.locator("code")).toHaveText(["auth-review", "https://example.com"])
+  await expect(markdown.locator("a[href]")).toHaveCount(0)
+  await links.nth(1).click()
+  expect(await page.evaluate(async (fixture) => (await import(fixture)).opened, fixture)).toEqual([sessionID])
+})

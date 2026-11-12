@@ -1,4 +1,9 @@
-import { parseSessionMention, sessionMentions, type SessionMention } from "@opencode/util/session-mention"
+import {
+  parseSessionMention,
+  sessionIDSource,
+  sessionMentions,
+  type SessionMention,
+} from "@opencode/util/session-mention"
 
 export type SessionTitle = (id: string) => string | undefined
 
@@ -180,4 +185,86 @@ export function sessionReferenceRange(range: Range) {
   if (last) selection.setEndAfter(last)
 
   return selection
+}
+
+const labelledSessionLink = new RegExp(`^session:(${sessionIDSource})$`)
+
+const anySessionID = new RegExp(sessionIDSource, "g")
+
+const hidden = /[\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}]/u
+
+const linkAttributes = new Set(["href", "title", "class", "target", "rel"])
+
+const labelTags = new Set(["CODE", "EM", "STRONG", "DEL", "S"])
+
+/** The session a labelled `[label](session:ses_...)` link opens, or undefined when the label shows any other ID. */
+export function labelledSessionLinkID(href: string, label: string) {
+  const id = labelledSessionLink.exec(href.trim())?.[1]
+
+  if (!id || hidden.test(label)) return
+
+  if ((label.match(anySessionID) ?? []).some((named) => named !== id)) return
+
+  return id
+}
+
+/** The session an anchor from the markdown link renderer opens, when its label is plain text or simple formatting. */
+export function sessionLinkTarget(link: HTMLAnchorElement) {
+  const href = link.getAttribute("href") ?? ""
+
+  if (!href.trim().startsWith("session:") || !["", "external-link"].includes(link.className)) return
+
+  if (link.getAttributeNames().some((name) => !linkAttributes.has(name)) || ![...link.childNodes].every(plainLabel))
+    return
+
+  return labelledSessionLinkID(href, `${link.textContent}\n${link.getAttribute("title") ?? ""}`)
+}
+
+function plainLabel(node: Node): boolean {
+  if (node instanceof Text) return true
+
+  return (
+    node instanceof HTMLElement &&
+    labelTags.has(node.tagName) &&
+    node.attributes.length === 0 &&
+    [...node.childNodes].every(plainLabel)
+  )
+}
+
+/** Makes labelled session links openable and focusable, with the target session ID as title and description. */
+export function markLabelledSessionLinks(root: HTMLElement) {
+  root.querySelectorAll("a[data-session-link]").forEach((link) => {
+    if (!(link instanceof HTMLAnchorElement)) return
+    link.setAttribute("data-session-link-active", "")
+    link.setAttribute("role", "link")
+    link.setAttribute("tabindex", "0")
+    link.setAttribute("title", link.dataset.sessionLink!)
+    link.setAttribute("aria-description", link.dataset.sessionLink!)
+  })
+}
+
+/** Opens a session link that markLabelledSessionLinks activated, on click or Enter, through the handler `open` returns. */
+export function setupLabelledSessionLinks(root: HTMLElement, open: () => ((id: string) => void) | undefined) {
+  const activate = (event: Event) => {
+    if (event.defaultPrevented || !(event.target instanceof Element)) return
+    const link = event.target.closest("a[data-session-link][data-session-link-active]")
+    const handler = open()
+
+    if (!(link instanceof HTMLAnchorElement) || !root.contains(link) || !handler) return
+    event.preventDefault()
+    event.stopPropagation()
+    handler(link.dataset.sessionLink!)
+  }
+
+  const keyDown = (event: KeyboardEvent) => {
+    if (event.key === "Enter") activate(event)
+  }
+
+  root.addEventListener("click", activate)
+  root.addEventListener("keydown", keyDown)
+
+  return () => {
+    root.removeEventListener("click", activate)
+    root.removeEventListener("keydown", keyDown)
+  }
 }

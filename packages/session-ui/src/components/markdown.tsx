@@ -71,7 +71,13 @@ import { createMarkdownImages } from "./markdown-image"
 import { createImagePreview } from "./image-preview"
 import { createDiagramPreview } from "./diagram-preview"
 import { setupFragmentLinks } from "./markdown-fragment-links"
-import { markSessionLinks, sessionReferenceClipboardText, setupSessionLinks } from "./markdown-session-links"
+import {
+  markLabelledSessionLinks,
+  markSessionLinks,
+  sessionReferenceClipboardText,
+  setupLabelledSessionLinks,
+  setupSessionLinks,
+} from "./markdown-session-links"
 import { markdownClipboardHtml } from "./markdown-clipboard"
 import { createCopyFeedback } from "./copy"
 
@@ -1041,6 +1047,7 @@ export function Markdown(
   let diagramCleanup: (() => void) | undefined
   let faviconCleanup: (() => void) | undefined
   let sessionLinkCleanup: (() => void) | undefined
+  let labelledLinkCleanup: (() => void) | undefined
   let fragmentLinkCleanup: (() => void) | undefined
   let readImage: ReadMarkdownImage | undefined
   let images: ReturnType<typeof createMarkdownImages> | undefined
@@ -1100,6 +1107,7 @@ export function Markdown(
     nextCodeKeys.forEach((key) => activeCodeKeys.add(key))
     const sessionLinks = markdown?.sessionTitle
     const localFileExists = markdown?.localFileExists
+    const labelledLinks = !!markdown?.openSession
 
     renderedEvent.reused = content.length === renderedBlocks.length
 
@@ -1111,7 +1119,17 @@ export function Markdown(
 
       const check = kept
         ? inlineCodeChecks.get(current)?.pending
-        : updateBlock(container, index, block, labels, plugins, sessionLinks, lifetime.signal, localFileExists)
+        : updateBlock(
+            container,
+            index,
+            block,
+            labels,
+            plugins,
+            sessionLinks,
+            labelledLinks,
+            lifetime.signal,
+            localFileExists,
+          )
 
       return check ? [check] : []
     })
@@ -1170,6 +1188,9 @@ export function Markdown(
         () => markdown?.sessionMenu,
       )
 
+    if (!labelledLinkCleanup && labelledLinks)
+      labelledLinkCleanup = setupLabelledSessionLinks(container, () => markdown?.openSession)
+
     if (!fragmentLinkCleanup) fragmentLinkCleanup = setupFragmentLinks(container)
 
     if (!faviconCleanup) faviconCleanup = setupExternalLinkFavicons(container)
@@ -1191,6 +1212,8 @@ export function Markdown(
     if (diagramCleanup) diagramCleanup()
 
     if (sessionLinkCleanup) sessionLinkCleanup()
+
+    if (labelledLinkCleanup) labelledLinkCleanup()
 
     if (fragmentLinkCleanup) fragmentLinkCleanup()
 
@@ -1272,6 +1295,7 @@ function updateBlock(
   labels: CodeLabels,
   plugins: CodePlugins | undefined,
   sessionLinks: ((id: string) => string | undefined) | undefined,
+  labelledLinks: boolean,
   signal: AbortSignal,
   localFileExists?: MarkdownLocalFileExists,
 ) {
@@ -1313,6 +1337,8 @@ function updateBlock(
   source.innerHTML = block.html
   const pending = markInlineCode(source, next, block.mode === "live", signal, localFileExists)
   markCodeLinks(source)
+
+  if (labelledLinks) markLabelledSessionLinks(source)
   wrapTables(source)
 
   if (sessionLinks) markSessionLinks(source, sessionLinks)

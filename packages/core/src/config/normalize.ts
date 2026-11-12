@@ -208,6 +208,7 @@ export function normalize(input: unknown): Result {
     shell: Info.fields.shell,
     default_agent: Info.fields.default_agent,
     share: Info.fields.share,
+    session_links: Info.fields.session_links,
     enterprise: Info.fields.enterprise,
     username: Info.fields.username,
     timezone: Info.fields.timezone,

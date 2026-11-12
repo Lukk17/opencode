@@ -375,6 +375,37 @@ test.describe("session ID links", () => {
   })
 })
 
+test("opens a labelled session link in its tab", async ({ page }) => {
+  const linkedID = "ses_0123456789abcdefghijklmnop"
+  await mockWorkspace(page, {
+    name: "SubagentNavigation",
+    sessions: [
+      { id: parentID, title: parentTitle, created: 1700000000000 },
+      { id: linkedID, title: "Linked review session", created: 1700000001000 },
+    ],
+    pageMessages: (sessionID) => ({
+      items:
+        sessionID === parentID
+          ? [
+              parentMessages()[0]!,
+              {
+                ...parentMessages()[1]!,
+                content: [{ type: "text", text: `Read [the child review](session:${linkedID}) first.` }],
+              },
+            ]
+          : [],
+    }),
+    seed: { tabs: [parentID] },
+  })
+  await page.goto(sessionHref(parentID))
+  await expectSessionTitle(page, parentTitle)
+  const link = page.locator('[data-component="markdown"] a', { hasText: "the child review" })
+
+  await link.click()
+  await expectPath(page, sessionHref(linkedID))
+  await expectSessionTitle(page, "Linked review session")
+})
+
 async function setup(page: Page, events?: () => OpenCodeEvent[], nestedDepth: 0 | 1 | 2 = 0) {
   await mockWorkspace(page, {
     name: "SubagentNavigation",

@@ -112,6 +112,7 @@ import { DynamicProviderPlugin } from "./provider/dynamic.js"
 import { OpencodePlugin } from "./provider/opencode.js"
 import { WebSearchPlugins } from "./websearch/index.js"
 import { SkillPlugin } from "./skill.js"
+import { SessionLinksPlugin } from "./session-links.js"
 import { VcsHgPlugin } from "./vcs/hg.js"
 import { ToolInputRepairPlugin } from "./tool-input-repair.js"
 import { OptimizePlugin } from "./optimize.js"
@@ -281,6 +282,7 @@ const pre = [
   SkillTool.Plugin,
   SubagentTool.Plugin,
   TodoTool.Plugin,
+  SessionLinksPlugin.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,

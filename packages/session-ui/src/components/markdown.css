@@ -198,6 +198,10 @@
     cursor: pointer;
   }
 
+  a[data-session-link][data-session-link-active] {
+    cursor: pointer;
+  }
+
   &[data-local-links] :not(pre) > code[data-inline-code-kind="path"]:not(a > code) {
     cursor: pointer;
   }

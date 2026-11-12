@@ -1,7 +1,9 @@
 export type SessionMention = { id: `ses_${string}` }
 
+export const sessionIDSource = "ses_[A-Za-z0-9]{26}"
+
 // Match complete generated IDs only, including while an assistant is streaming one.
-const pattern = /(?<![\w/:@-])(?:@session:)?(ses_[A-Za-z0-9]{26})(?![\w/-])/g
+const pattern = new RegExp(String.raw`(?<![\w/:@-])(?:@session:)?(${sessionIDSource})(?![\w/-])`, "g")
 
 export function sessionMentions(text: string) {
   return Array.from(text.matchAll(pattern), (match) => ({
