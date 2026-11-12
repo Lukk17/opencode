@@ -54,6 +54,7 @@ export function resolve(input: {
       .map((item): [string, boolean] => (item.startsWith("-") ? [item.slice(1), false] : [item, true])),
   )
   const all = env.get(ConfigFlag.wildcard) === true
+  const sourcesForbidden = Config.forbidsSources(input.entries)
   const experimental = Config.latest(input.entries, "experimental")
   const allFlags =
     input.entries.findLast(
@@ -61,7 +62,8 @@ export function resolve(input: {
     )?.info.experimental?.all_flags === true
   return Record.map(ConfigFlag.registry, (_, key): State => {
     const override = env.get(key) ?? (all ? true : undefined)
-    const configured = experimental?.[key] ?? (allFlags ? true : undefined)
+    const configured =
+      key === "config_sources" && sourcesForbidden ? false : (experimental?.[key] ?? (allFlags ? true : undefined))
     const [enabled, source]: [boolean, State["source"]] =
       override !== undefined
         ? [override, "env"]

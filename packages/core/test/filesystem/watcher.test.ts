@@ -183,6 +183,36 @@ describe("Watcher lifecycle", () => {
     ),
   )
 
+  it.live("watches every immediate entry and nothing nested when no names are given", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const native = yield* Watcher.Native
+          const events: Watcher.Update[] = []
+          yield* Effect.promise(() => fs.mkdir(path.join(tmp.path, "nested")))
+          yield* Effect.acquireRelease(
+            native.subscribe({
+              type: "entries",
+              target: tmp.path,
+              ignore: [],
+              publish: (update) => events.push(update),
+            }),
+            (subscription) => Effect.promise(() => subscription?.unsubscribe() ?? Promise.resolve()),
+          )
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "nested", "deep.ts"), "ignored"))
+          yield* Effect.sleep("50 millis")
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "added.ts"), "first"))
+          yield* Effect.sync(() => events.some((update) => update.path === path.join(tmp.path, "added.ts"))).pipe(
+            Effect.filterOrFail(Boolean),
+            Effect.retry(Schedule.spaced("10 millis")),
+            Effect.timeout("1 second"),
+          )
+          expect(events.some((update) => update.path === path.join(tmp.path, "nested", "deep.ts"))).toBe(false)
+        }).pipe(Effect.provide(Watcher.nativeLayer)),
+      ),
+    ),
+  )
+
   it.effect("interrupting a consumer interrupts a pending acquisition", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>()

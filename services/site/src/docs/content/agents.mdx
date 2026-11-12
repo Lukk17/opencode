@@ -44,6 +44,31 @@ OpenCode discovers project `.opencode` directories from the current directory up
 .opencode/agents/team/reviewer.md  →  team/reviewer
 ```
 
+With the experimental `config_sources` flag on, OpenCode also loads Markdown agents from directories you list in
+`sources.agents`, and from `.agents` directories once some config file has a `sources` key, even an empty one:
+
+```text
+~/.agents/agents/<name>.md
+.agents/agents/<name>.md
+```
+
+The `agent/`, `agents/`, `mode/`, and `modes/` folders of a `.agents` directory all load. Agents in `mode/` and
+`modes/` are primary agents.
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": { "config_sources": true },
+  "sources": {
+    "agents": ["./team-agents"],
+  },
+}
+```
+
+A listed directory loads every `.md` file in it and in its subdirectories as an agent named by its path inside that
+directory, so keep only agent files there. A project config file can list only folders inside the project. Set
+`sources.load_only_selected` to `true` to load file-based agents only from listed directories. See
+[Config sources](/config#config-sources) for precedence, path resolution, and limits.
+
 ## Formats
 
 ### Markdown

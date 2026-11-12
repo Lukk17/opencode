@@ -19,5 +19,7 @@ export const registry = {
     "Watch Slack threads, GitHub pull requests, issues, commits and Actions runs, and the workspace's MCP servers' events through OpenCode Console, and wake sessions when they change.",
   mcp_events:
     "Enable experimental MCP Events, a draft MCP extension: declare support to MCP servers and read the events of servers that offer them.",
+  config_sources:
+    "Enable the experimental sources config: choose where agents, skills and plugins load from, switch global config off from a project, and load agents from .agents/agents folders.",
 } as const satisfies Record<string, string>
 export type Key = keyof typeof registry

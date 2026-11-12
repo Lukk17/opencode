@@ -10,6 +10,7 @@ import { SkillFile } from "@opencode/core/config/plugin/skill-file"
 import { SkillScan } from "@opencode/core/config/plugin/skill-scan"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Watcher } from "@opencode/core/filesystem/watcher"
+import { Flag } from "@opencode/core/flag"
 import { Bus } from "@opencode/core/bus"
 import { Credential } from "@opencode/core/credential"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -30,7 +31,11 @@ import { host } from "../plugin/host"
 const emptyDiscovery = SkillDiscovery.Service.of({ pull: () => Effect.succeed([]) })
 const watcherLayer = Watcher.testLayer
 const it = testEffect(
-  Layer.merge(AppNodeBuilder.build(LayerNode.group([Skill.node, Bus.node, FSUtil.node])), watcherLayer),
+  Layer.mergeAll(
+    AppNodeBuilder.build(LayerNode.group([Skill.node, Bus.node, FSUtil.node])),
+    watcherLayer,
+    Flag.testLayer(),
+  ),
 )
 const decode = Schema.decodeUnknownSync(Info)
 

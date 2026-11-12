@@ -1,13 +1,14 @@
 export * as ConfigSkillPlugin from "./skill.js"
 
 import { define } from "@opencode/plugin/effect/plugin"
-import type { Entry } from "@opencode/schema/config"
+import type { Directory, Entry } from "@opencode/schema/config"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import path from "path"
 import { Effect, FiberMap, PubSub, Semaphore, Stream } from "effect"
 import { Config } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
+import { Flag } from "../../flag.js"
 import { Location } from "../../location.js"
 import { AbsolutePath } from "../../schema.js"
 import { Skill } from "../../skill.js"
@@ -22,6 +23,7 @@ export const Plugin = define({
   effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
     const discovery = yield* SkillDiscovery.Service
+    const flags = yield* Flag.Service
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
     const location = yield* Location.Service
@@ -77,13 +79,15 @@ export const Plugin = define({
       return [target]
     })
 
-    const sources = () => {
+    const defaultRoots = () => loaded.entries.filter((entry): entry is Directory => entry.type === "directory")
+
+    const sources = (only: boolean) => {
       const result: Source[] = []
       const add = (source: Source) => {
         if (result.some((item) => Skill.Source.equals(item, source))) return
         result.push(source)
       }
-      const directories = loaded.entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
+      const directories = defaultRoots().flatMap((entry) => (only && !Config.isManaged(entry) ? [] : [entry.path]))
       const items = loaded.entries.flatMap((entry) => (entry.type === "document" ? (entry.info.skills ?? []) : []))
       for (const directory of directories) {
         add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(path.join(directory, "skill")) }))
@@ -149,8 +153,21 @@ export const Plugin = define({
     const refresh = Effect.fn("ConfigSkillPlugin.refresh")(
       function* (file?: string) {
         yield* FiberMap.clear(watches)
+        const only =
+          flags.resolve(loaded.entries).config_sources.enabled &&
+          Config.effectiveSources(loaded.entries).load_only_selected === true
+        if (only)
+          yield* Effect.forEach(
+            defaultRoots().filter((entry) => !Config.isManaged(entry)),
+            (entry) =>
+              Effect.logDebug("default source root skipped", {
+                kind: "skills",
+                root: entry.path,
+                reason: "load_only_selected",
+              }),
+          )
         const skills = new Map<Skill.ID, Skill.Info>()
-        const current = sources()
+        const current = sources(only)
         for (const source of current) {
           for (const skill of yield* load(source)) skills.set(skill.id, skill)
         }

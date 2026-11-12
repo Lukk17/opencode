@@ -9,6 +9,7 @@ import { Effect, FiberMap, PubSub, Semaphore, Stream } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Config } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
+import { Flag } from "../../flag.js"
 import { InstructionDiscovery } from "../../instruction-discovery.js"
 import { Instructions } from "../../instructions/index.js"
 import { Location } from "../../location.js"
@@ -25,6 +26,7 @@ export const Plugin = define({
     // entries are explicit requests, not discovery.
     yield* Effect.gen(function* () {
       const config = yield* Config.Service
+      const flags = yield* Flag.Service
       const fs = yield* FSUtil.Service
       const global = yield* Global.Service
       const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
@@ -40,9 +42,10 @@ export const Plugin = define({
       const stop = FSUtil.contains(home, start) ? home : root
       const globalFile = yield* fs.resolve(join(global.config, "AGENTS.md"))
       const loaded: { current: Loaded } = { current: { type: "available", files: [] } }
-      const configured: { sources: string[]; remote: Map<string, InstructionDiscovery.File> } = {
+      const configured: { sources: string[]; remote: Map<string, InstructionDiscovery.File>; global: boolean } = {
         sources: [],
         remote: new Map(),
+        global: discovery.global,
       }
 
       const publish = (update: Watcher.Update) => PubSub.publish(changes, update.path).pipe(Effect.asVoid)
@@ -76,7 +79,7 @@ export const Plugin = define({
       })
 
       const globalSource = Effect.fn("ConfigInstructionPlugin.globalSource")(function* () {
-        if (!discovery.global || !(yield* fs.isFile(globalFile))) return []
+        if (!configured.global || !(yield* fs.isFile(globalFile))) return []
         const file = yield* read(globalFile)
         return file instanceof InstructionDiscovery.File ? [file] : []
       })
@@ -87,7 +90,7 @@ export const Plugin = define({
           yield* fs.up({ targets: ["AGENTS.md"], start, stop, type: "file" }),
           fs.resolve,
         )
-        const discovered = new Set(walked.filter((file) => discovery.global || file !== globalFile))
+        const discovered = new Set(walked.filter((file) => configured.global || file !== globalFile))
         const files = yield* Effect.forEach(discovered, read, { concurrency: "unbounded" })
         if (files.some((file) => file === undefined)) return Instructions.unavailable
         return files.filter((file) => file instanceof InstructionDiscovery.File)
@@ -111,7 +114,7 @@ export const Plugin = define({
             .pipe(Effect.orElseSucceed(() => [] as string[]))
         }
         if (project) return yield* fs.globUp(expanded, start, root)
-        if (!discovery.global) return []
+        if (!configured.global) return []
         return yield* fs
           .scan(expanded, { ...options, cwd: global.config })
           .pipe(Effect.orElseSucceed(() => [] as string[]))
@@ -171,6 +174,8 @@ export const Plugin = define({
             { concurrency: 4 },
           )
           configured.sources = sources
+          configured.global =
+            discovery.global && Config.loadsGlobal(entries, (items) => flags.resolve(items).config_sources.enabled)
           configured.remote = new Map(
             fetched.filter((file) => file !== undefined).map((file) => [file.path, file] as const),
           )

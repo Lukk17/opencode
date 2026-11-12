@@ -1,11 +1,14 @@
 export * as ConfigCompatibilityPlugin from "./compatibility.js"
 
 import { define } from "@opencode/plugin/effect/plugin"
+import type { Entry } from "@opencode/schema/config"
 import { FSUtil } from "@opencode/util/fs-util"
 import path from "path"
+import { isDeepStrictEqual } from "node:util"
 import { Effect, FiberMap, PubSub, Semaphore, Stream } from "effect"
 import { Config } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
+import { Flag } from "../../flag.js"
 import { Skill } from "../../skill.js"
 import { SkillFile } from "./skill-file.js"
 import { SkillScan } from "./skill-scan.js"
@@ -14,6 +17,7 @@ export const Plugin = define({
   id: "opencode.config.compatibility",
   effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
+    const flags = yield* Flag.Service
     const fs = yield* FSUtil.Service
     const watcher = yield* Watcher.Service
     const watches = yield* FiberMap.make<string>()
@@ -22,6 +26,9 @@ export const Plugin = define({
     const skills: Skill.Info[] = []
     const compatibility = () =>
       config.compatibility ? config.compatibility() : Effect.succeed({ claude: [], agents: [] })
+    const selected = (entries: readonly Entry[]) =>
+      flags.resolve(entries).config_sources.enabled && Config.effectiveSources(entries).load_only_selected === true
+    const scanned = { enabled: false, selected: false, roots: yield* compatibility() }
 
     const watch = Effect.fn("ConfigCompatibilityPlugin.watch")(function* (
       target: string,
@@ -42,7 +49,17 @@ export const Plugin = define({
       function* () {
         yield* FiberMap.clear(watches)
         const roots = yield* compatibility()
-        const directories = [...roots.claude, ...roots.agents].map((root) => path.join(root, "skills"))
+        const entries = yield* config.entries()
+        scanned.enabled = flags.resolve(entries).config_sources.enabled
+        scanned.selected = selected(entries)
+        scanned.roots = roots
+        if (scanned.selected)
+          yield* Effect.forEach([...roots.claude, ...roots.agents], (root) =>
+            Effect.logDebug("default source root skipped", { kind: "skills", root, reason: "load_only_selected" }),
+          )
+        const directories = scanned.selected
+          ? []
+          : [...roots.claude, ...roots.agents].map((root) => path.join(root, "skills"))
         const loaded = new Map<Skill.ID, Skill.Info>()
         for (const directory of directories) {
           const resolved = yield* fs.realPath(directory).pipe(Effect.orElseSucceed(() => undefined))
@@ -72,6 +89,19 @@ export const Plugin = define({
         Effect.map(compatibility(), (roots) => isCompatibilitySource(roots, update.path)),
       ),
       Stream.runForEach((update) => PubSub.publish(changes, update.path).pipe(Effect.asVoid)),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    yield* ctx.event.subscribe({ types: ["config.updated"] }).pipe(
+      Stream.filterEffect(() =>
+        Effect.all([config.entries(), compatibility()]).pipe(
+          Effect.map(
+            ([entries, roots]) =>
+              (scanned.enabled || flags.resolve(entries).config_sources.enabled) &&
+              (selected(entries) !== scanned.selected || !isDeepStrictEqual(roots, scanned.roots)),
+          ),
+        ),
+      ),
+      Stream.runForEach(() => PubSub.publish(changes, "config.updated").pipe(Effect.asVoid)),
       Effect.forkScoped({ startImmediately: true }),
     )
     yield* refresh()

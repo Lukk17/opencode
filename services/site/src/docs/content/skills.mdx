@@ -181,6 +181,12 @@ Sources are registered from lower to higher precedence:
 
 Avoid duplicate IDs unless you intend to override an earlier skill.
 
+With the experimental `config_sources` flag on, two `sources` settings change these locations. `load_global: false`
+in project config skips `~/.config/opencode/skills`, `~/.claude/skills`, and `~/.agents/skills`.
+`load_only_selected: true` skips every discovered location except the managed system folder and loads skills only from
+the `skills` array. See
+[Config sources](/config#config-sources).
+
 ## Loading
 
 At each model step, OpenCode lists permitted skills that have a description and do not set `opencode/autoinvoke` to `false`. The list includes only the ID, name, and description, not the full Markdown body.

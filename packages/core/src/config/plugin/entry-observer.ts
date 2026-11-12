@@ -27,8 +27,8 @@ export const observe = Effect.fnUntraced(function* (
 })
 
 /**
- * Loads documents from config entries and reloads them when config is updated or a file changes
- * under one of `directories` in a config directory.
+ * Loads documents from config entries and reloads them when config is updated, a file changes
+ * under one of `directories` in a config directory, or `changes` emits.
  */
 export const observeSources = Effect.fnUntraced(function* <A>(input: {
   readonly config: Config.Interface
@@ -36,6 +36,8 @@ export const observeSources = Effect.fnUntraced(function* <A>(input: {
   readonly directories: readonly string[]
   readonly load: () => Effect.Effect<A[]>
   readonly reload: Effect.Effect<void>
+  /** Changes in sources the config change feed does not report, such as directories watched by the caller. */
+  readonly changes?: Stream.Stream<unknown>
 }) {
   const config = input.config
   const loaded = { documents: [] as A[] }
@@ -60,6 +62,7 @@ export const observeSources = Effect.fnUntraced(function* <A>(input: {
   yield* input.event
     .subscribe({ types: ["config.updated"] })
     .pipe(Stream.runForEach(notify), Effect.forkScoped({ startImmediately: true }))
+  if (input.changes) yield* input.changes.pipe(Stream.runForEach(notify), Effect.forkScoped({ startImmediately: true }))
   const updates = yield* PubSub.subscribe(changes)
   yield* Stream.fromSubscription(updates).pipe(
     Stream.debounce("100 millis"),

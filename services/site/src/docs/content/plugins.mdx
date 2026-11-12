@@ -70,6 +70,23 @@ directories explicitly or move it under `.opencode/`.
 }
 ```
 
+With the experimental `config_sources` flag on, list more plugin directories in `sources.plugins`. Each direct `.ts`
+or `.js` file and each package directory inside a listed directory loads as a plugin, like a `.opencode/plugins/`
+directory. Set `sources.load_only_selected` to `true` to skip the discovered `plugins/` directories and load plugins
+only from `sources.plugins` and the `plugins` array.
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": { "config_sources": true },
+  "sources": {
+    "plugins": ["./team-plugins"],
+  },
+}
+```
+
+A project config file can list only folders inside the project. Global config can list any folder, such as
+`~/shared-plugins`. See [Config sources](/config#config-sources) for path resolution and limits.
+
 ## Control
 
 Plugin entries are processed in order. Prefix an ID or wildcard with `-` to disable it, use `*` for every plugin, and

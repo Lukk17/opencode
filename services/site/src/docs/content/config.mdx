@@ -533,6 +533,21 @@ accepts options.
 
 See the [plugins guide](/plugins) for plugin loading and configuration.
 
+### Sources
+
+`sources` chooses where agents, skills, and plugins load from and whether global config loads. It only takes effect
+while the experimental `config_sources` flag is on. See [Config sources](#config-sources).
+
+```jsonc
+{
+  "experimental": { "config_sources": true },
+  "sources": {
+    "agents": ["./team-agents"],
+    "plugins": ["./team-plugins"],
+  },
+}
+```
+
 ### Providers
 
 Configure providers and add or override their models, request settings,
@@ -689,6 +704,74 @@ value.
   },
 }
 ```
+
+### Config sources
+
+Set `config_sources` to `true` to turn on the top-level [`sources`](#sources) key. Without the flag, OpenCode ignores
+`sources` and loads config exactly as described above. The `OPENCODE_FLAGS` environment variable overrides the config
+value: `OPENCODE_FLAGS=config_sources` turns the flag on for one run, and `OPENCODE_FLAGS=-config_sources` turns it
+off. Global or managed config that sets `config_sources` to `false` keeps the flag off for every project, even a project
+that turns it on for itself. Only `OPENCODE_FLAGS` turns it on again.
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": {
+    "config_sources": true,
+  },
+  "sources": {
+    "agents": ["./team-agents"],
+    "plugins": ["./team-plugins"],
+    "load_global": false,
+    "load_only_selected": false,
+  },
+}
+```
+
+| Field                | Effect                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `agents`             | Directories scanned for agent Markdown files.                                                          |
+| `plugins`            | Directories whose direct children load as plugins.                                                     |
+| `load_global`        | Set to `false` to skip the global config directory and the home compatibility folders. Default `true`. |
+| `load_only_selected` | Set to `true` to load agents, skills, and plugins only from paths you list. Default `false`.           |
+
+Relative paths resolve from the directory of the config file that lists them, `~/` paths resolve from your home
+directory, and paths in `OPENCODE_CONFIG_CONTENT` resolve from the current directory. A project config file can list
+only folders inside the project. OpenCode skips any other folder with one warning for each. Global and managed config can list any folder. The `agents` and `plugins` lists
+of every config file are combined. Listed agents and plugins load at the position of the file that lists them, so the
+agent settings in that file and in every file with higher precedence override them. Remote config, such as config
+shared by an [OpenCode Console](/console) workspace, cannot list sources or switch global config off.
+
+A directory in `sources.agents` loads every `.md` file in it and in its subdirectories, whatever the file contains, so
+keep only agent files there. Each file is an agent named by its path inside that directory, so
+`team-agents/review/strict.md` becomes the `review/strict` agent. In a directory in `sources.plugins`, each `.ts` or
+`.js` file and each plugin package directory loads as one plugin. A listed directory that does not exist yet is
+skipped with a warning and loads once it is created.
+
+OpenCode skips, with a warning, a listed path that is the filesystem root, your home directory, or a parent of your home
+directory. Each config file lists at most 32 `agents` and 32 `plugins` entries, and further entries are skipped with a
+warning. OpenCode reads at most 1000 files and folders in each listed directory and warns you to list a smaller folder
+when it holds more. A listed plugins directory is watched for its direct children and for the `package.json` of each
+plugin folder it loads.
+
+While the flag is on and some config file has a `sources` key, even an empty one, OpenCode also loads agents from the
+`agent/`, `agents/`, `mode/`, and `modes/` folders of `~/.agents` and of every project `.agents` directory. Agents in `mode/` and `modes/` are primary agents. `~/.agents`
+agents override global config agents, and every project config file, `OPENCODE_CONFIG`, and `OPENCODE_CONFIG_CONTENT`
+override project `.agents` agents.
+
+`load_global: false` skips `~/.config/opencode`, including its `opencode.json(c)`, agents, commands, skills, plugins,
+and `AGENTS.md`, and the home `~/.claude` and `~/.agents` folders. Managed config from the system directory and
+managed preferences still loads, and so do the `policies` and `permissions` of the global config, so switching global
+config off never lifts a restriction set there. Only project config, `OPENCODE_CONFIG`, and `OPENCODE_CONFIG_CONTENT` can switch global
+config off. While the flag is on, `load_global` anywhere else, such as global, managed, or remote config, or a project
+inside a global config folder, is ignored with a warning. The flag must also be turned on somewhere other than the
+global config, for example in the same project file or through `OPENCODE_FLAGS`, because global config cannot decide
+whether it loads itself. A change applies when the config reloads.
+
+`load_only_selected: true` loads agents only from `sources.agents` and the `agents` setting, skills only from the
+top-level [`skills`](#skills) list, and plugins only from `sources.plugins` and the top-level [`plugins`](#plugins)
+list. It skips the `agents/`, `skills/`, and `plugins/` folders of every config directory except the managed system
+directory, such as `/etc/opencode`, and the `.claude` and `.agents` folders. It does not change which config files load, and it does not affect
+commands or instruction files.
 
 ### Deprecated policies
 

@@ -10,15 +10,20 @@ export const discover = Effect.fn("PluginSourceDirectory.discover")(function* (
   fs: FSUtil.Interface,
   directory: string,
 ) {
-  const children = (yield* Effect.forEach(names, (source) =>
-    fs.readDirectoryEntries(path.join(directory, source)).pipe(
-      Effect.orElseSucceed(() => []),
-      Effect.map((entries) => entries.map((entry) => ({ ...entry, target: path.join(directory, source, entry.name) }))),
-    ),
-  ))
+  return (yield* Effect.forEach(names, (source) => children(fs, path.join(directory, source))))
     .flat()
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+})
+
+/** Lists the direct children of one plugin directory that load as plugins, sorted by path. */
+export const children = Effect.fn("PluginSourceDirectory.children")(function* (
+  fs: FSUtil.Interface,
+  directory: string,
+) {
+  const entries = (yield* fs.readDirectoryEntries(directory).pipe(Effect.orElseSucceed(() => [])))
+    .map((entry) => ({ ...entry, target: path.join(directory, entry.name) }))
     .sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : 0))
-  const targets = yield* Effect.forEach(children, (entry) =>
+  const targets = yield* Effect.forEach(entries, (entry) =>
     Effect.gen(function* () {
       const source = entry.target.endsWith(".ts") || entry.target.endsWith(".js")
       if (entry.type === "File" && source) return Option.some(entry.target)

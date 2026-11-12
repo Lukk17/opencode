@@ -17,6 +17,7 @@ import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
 import { ConfigReference } from "./config/reference.js"
+import { ConfigSources } from "./config/sources.js"
 import { ConfigWebSearch } from "./config/websearch.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
 import { ConfigWatcher } from "./config/watcher.js"
@@ -90,6 +91,10 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   skills: Schema.String.pipe(Schema.Array, optional).annotate({
     description: "Additional paths or URLs to discover skills from",
+  }),
+  sources: ConfigSources.Info.pipe(optional).annotate({
+    description:
+      "Where agents, skills and plugins load from and whether global config loads, while the experimental config_sources flag is on",
   }),
   commands: Schema.Record(Schema.String, ConfigCommand.Info).pipe(optional).annotate({
     description: "Named slash command definitions",

@@ -4,10 +4,14 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Document, Info, type Entry } from "@opencode/schema/config"
 import { ConfigAgent } from "@opencode/schema/config/agent"
 import path from "path"
-import { Effect, Result, SchemaIssue, SchemaParser } from "effect"
+import { Effect, FiberMap, PubSub, Result, SchemaIssue, SchemaParser, Stream } from "effect"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
+import { Flag } from "../../flag.js"
 import { ConfigMarkdown } from "../markdown.js"
+import { ConfigSourcePath } from "../source-path.js"
+import { ConfigSourceWatches } from "../source-watches.js"
+import { Watcher } from "../../filesystem/watcher.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import { ConfigAgentV1 } from "../../v1/config/agent.js"
@@ -23,7 +27,7 @@ const legacySources = [
   { pattern: "{agent,agents}/**/*.md", primary: false },
   { pattern: "{mode,modes}/*.md", primary: true },
 ] as const
-// Keep in sync with the legacySources patterns and the name-strip regex in decode.
+// Keep in sync with the legacySources patterns and the name-strip regex in discover.
 const sourceDirectories = ["agent", "agents", "mode", "modes"] as const
 const decodeAgent = SchemaParser.decodeUnknownResult(ConfigAgent.Info)
 const decodeLegacyAgent = SchemaParser.decodeUnknownResult(ConfigAgentV1.Info)
@@ -38,28 +42,182 @@ export const Plugin = define({
   id: "opencode.config.agent",
   effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
+    const flags = yield* Flag.Service
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
-    const loadEntry = Effect.fnUntraced(function* (entry: Entry) {
-      if (entry.type === "document") return [entry]
-      if (entry.type !== "directory") return []
-      const files = yield* discover(fs, entry.path)
-      return yield* Effect.forEach(files, (file) =>
+    const watcher = yield* Watcher.Service
+    const loadFiles = (files: readonly AgentFile[]) =>
+      Effect.forEach(files, (file) =>
         fs.readFileStringSafe(file.filepath).pipe(
           Effect.flatMap((content) => (content ? decode(file, content) : Effect.succeed(undefined))),
           Effect.orElseSucceed(() => undefined),
         ),
       ).pipe(Effect.map((documents) => documents.filter((document): document is Document => document !== undefined)))
+    const loadDirectory = (directory: string) => discover(fs, directory).pipe(Effect.flatMap(loadFiles))
+    const loadEntry = Effect.fnUntraced(function* (entry: Entry) {
+      if (entry.type === "document") return [entry]
+      if (entry.type !== "directory") return []
+      return yield* loadDirectory(entry.path)
+    })
+
+    const sourceChanges = yield* PubSub.sliding<void>(1)
+    const notifySources = PubSub.publish(sourceChanges, undefined).pipe(Effect.asVoid)
+    const watched = yield* FiberMap.make<string>()
+    const current: { selection?: Selection } = {}
+    const missing = new Set<string>()
+    const reported = { keys: new Set<string>() }
+    const select = Effect.fnUntraced(function* (entries: readonly Entry[]) {
+      if (!flags.resolve(entries).config_sources.enabled) return undefined
+      const selected = Config.effectiveSources(entries).load_only_selected === true
+      const available =
+        config.compatibility === undefined ||
+        !entries.some((entry) => entry.type === "document" && entry.info.sources !== undefined)
+          ? []
+          : (yield* config.compatibility()).agents
+      const home = path.join(global.home, ".agents")
+      const listed = yield* Effect.forEach(Config.sourceGroups(entries), (group) =>
+        group.agents === undefined
+          ? Effect.succeed([])
+          : ConfigSourcePath.directories(
+              fs,
+              { source: group.document.path, kind: "agents" },
+              group.agents,
+              group.base ?? ctx.location.directory,
+              global.home,
+              group.project ? ctx.location.project.directory : undefined,
+            ).pipe(Effect.map((result) => [{ document: group.document, ...result }])),
+      ).pipe(Effect.map((groups) => groups.flat()))
+      const directories = entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
+      if (selected)
+        yield* Effect.forEach(
+          [
+            ...entries.flatMap((entry) => (entry.type === "directory" && !Config.isManaged(entry) ? [entry.path] : [])),
+            ...available,
+          ],
+          (root) =>
+            Effect.logDebug("default source root skipped", { kind: "agents", root, reason: "load_only_selected" }),
+        )
+      return {
+        selected,
+        home: selected ? [] : available.filter((root) => root === home),
+        project: selected ? [] : available.filter((root) => root !== home),
+        groups: listed.map((group) => ({ document: group.document, directories: group.directories })),
+        directories,
+        diagnostics: listed.flatMap((group) => group.diagnostics),
+      } satisfies Selection
+    })
+    const watchSources = Effect.fnUntraced(function* (selection: Selection | undefined) {
+      const roots = selection === undefined ? [] : [...selection.home, ...selection.project]
+      const listed = yield* Effect.forEach(
+        [...new Set(selection?.groups.flatMap((group) => group.directories) ?? [])],
+        (directory) => fs.isDir(directory).pipe(Effect.map((exists) => ({ directory, exists }))),
+      )
+      yield* Effect.forEach(listed, (item) => {
+        if (item.exists || missing.has(item.directory)) return Effect.void
+        missing.add(item.directory)
+        return Effect.logWarning("listed source directory not found", { kind: "agents", directory: item.directory })
+      })
+      const outside = listed.filter(
+        (item) => !selection?.directories.some((root) => FSUtil.contains(root, item.directory)),
+      )
+      const agentDirectories = yield* Effect.filter(
+        roots.flatMap((root) => sourceDirectories.map((name) => path.join(root, name))),
+        fs.isDir,
+      )
+      const targets = [
+        ...outside.map(
+          (item): Watcher.WatchInput =>
+            item.exists
+              ? directoryWatch(item.directory)
+              : { path: path.dirname(item.directory), type: "entries", names: [path.basename(item.directory)] },
+        ),
+        ...agentDirectories.map(directoryWatch),
+        ...roots.map((root): Watcher.WatchInput => ({ path: root, type: "entries", names: [...sourceDirectories] })),
+      ]
+      yield* ConfigSourceWatches.sync(
+        watcher,
+        watched,
+        new Map(targets.map((watch) => [JSON.stringify(watch), watch] as const)),
+        notifySources,
+      )
     })
     const load = Effect.fn("ConfigAgentPlugin.load")(function* () {
-      return yield* Effect.forEach(yield* config.entries(), loadEntry).pipe(Effect.map((documents) => documents.flat()))
+      const entries = yield* config.entries()
+      const selection = yield* select(entries)
+      current.selection = selection
+      yield* watchSources(selection)
+      if (selection === undefined) return (yield* Effect.forEach(entries, loadEntry)).flat()
+      const scans = new Map(
+        yield* Effect.forEach(selection.groups, (group) =>
+          Effect.forEach(group.directories, (directory) =>
+            ConfigSourcePath.walk(fs, directory).pipe(
+              Effect.map((found) => discoverListed({ source: group.document.path, kind: "agents" }, directory, found)),
+            ),
+          ).pipe(Effect.map((items) => [group.document, items] as const)),
+        ),
+      )
+      const loadSelected = Effect.fnUntraced(function* (entry: Entry) {
+        if (entry.type === "directory")
+          return selection.selected && !Config.isManaged(entry) ? [] : yield* loadDirectory(entry.path)
+        const items = scans.get(entry)
+        if (items === undefined) return [entry]
+        const documents = yield* Effect.forEach(items, (scan) => loadFiles(scan.files))
+        return [...documents.flat(), entry]
+      })
+      const home =
+        entries.findLastIndex((entry) => {
+          const scope = Config.entryScope(entry)
+          return scope === "policy" || scope === "integration" || scope === "wellknown" || scope === "global"
+        }) + 1
+      const project = entries.findIndex((entry, index) => {
+        const scope = Config.entryScope(entry)
+        return (
+          index >= home &&
+          (scope === "explicit" ||
+            scope === "direct" ||
+            scope === "project" ||
+            scope === "content" ||
+            scope === "managed")
+        )
+      })
+      const end = project === -1 ? entries.length : project
+      const sections = yield* Effect.all([
+        Effect.forEach(entries.slice(0, home), loadSelected),
+        Effect.forEach(selection.home, loadDirectory),
+        Effect.forEach(entries.slice(home, end), loadSelected),
+        Effect.forEach(selection.project, loadDirectory),
+        Effect.forEach(entries.slice(end), loadSelected),
+      ])
+      reported.keys = yield* ConfigSourcePath.warn(
+        reported.keys,
+        ConfigSourcePath.keyed([
+          ...selection.diagnostics,
+          ...[...scans.values()].flat().flatMap((scan) => scan.diagnostics),
+        ]),
+      )
+      return sections.flat(2)
     })
+    yield* config.changes().pipe(
+      Stream.filter((update) => {
+        const selection = current.selection
+        if (selection === undefined) return false
+        return (
+          path.basename(update.path) === ".agents" ||
+          selection.groups.some((group) =>
+            group.directories.some((directory) => FSUtil.contains(directory, update.path)),
+          )
+        )
+      }),
+      Stream.runForEach(() => notifySources),
+      Effect.forkScoped({ startImmediately: true }),
+    )
     const loaded = yield* ConfigEntryObserver.observeSources({
       config,
       event: ctx.event,
       directories: sourceDirectories,
       load,
       reload: ctx.agent.reload(),
+      changes: Stream.fromPubSub(sourceChanges),
     })
     yield* ctx.agent.transform((editor) => {
       const permissions = expandPermissions(
@@ -109,6 +267,21 @@ export const Plugin = define({
   }),
 })
 
+interface Selection {
+  readonly selected: boolean
+  readonly home: readonly string[]
+  readonly project: readonly string[]
+  readonly groups: readonly { readonly document: Document; readonly directories: readonly string[] }[]
+  readonly directories: readonly string[]
+  readonly diagnostics: readonly Record<string, unknown>[]
+}
+
+interface AgentFile {
+  readonly filepath: string
+  readonly primary: boolean
+  readonly name: string
+}
+
 function expandPermissions(rules: Permission.Ruleset, home: string): Permission.Ruleset {
   // Expand only resources tools resolve as filesystem paths. Bash resources are raw shell text:
   // rewriting `$HOME/private/**` would miss `$HOME/private/key`, and safe expansion needs shell-aware parsing.
@@ -137,7 +310,15 @@ function discover(fs: FSUtil.Interface, directory: string) {
     fs
       .scan(source.pattern, { cwd: directory, absolute: true, dot: true, symlink: true, ignore: FSUtil.ignoreGlobs })
       .pipe(
-        Effect.map((files) => files.toSorted().map((filepath) => ({ directory, filepath, primary: source.primary }))),
+        Effect.map((files) =>
+          files.toSorted().map(
+            (filepath): AgentFile => ({
+              filepath,
+              primary: source.primary,
+              name: agentName(directory, filepath).replace(/^(agent|agents|mode|modes)\//, ""),
+            }),
+          ),
+        ),
       ),
   ).pipe(
     Effect.map((files) => files.flat()),
@@ -145,20 +326,31 @@ function discover(fs: FSUtil.Interface, directory: string) {
   )
 }
 
-const decode = Effect.fnUntraced(function* (
-  file: { directory: string; filepath: string; primary: boolean },
-  content: string,
-) {
+function discoverListed(origin: ConfigSourcePath.Origin, directory: string, found: readonly string[]) {
+  const result = ConfigSourcePath.files(origin, directory, found.toSorted())
+  return {
+    files: result.files
+      .filter((filepath) => filepath.endsWith(".md"))
+      .map((filepath): AgentFile => ({ filepath, primary: false, name: agentName(directory, filepath) })),
+    diagnostics: result.diagnostics,
+  }
+}
+
+function directoryWatch(directory: string): Watcher.WatchInput {
+  return { path: directory, type: "directory", ignore: FSUtil.ignoreGlobs }
+}
+
+function agentName(directory: string, filepath: string) {
+  return path.relative(directory, filepath).replaceAll("\\", "/").replace(/\.md$/, "")
+}
+
+const decode = Effect.fnUntraced(function* (file: AgentFile, content: string) {
   const markdown = ConfigMarkdown.parseOption(content)
   if (!markdown) {
     yield* Effect.logWarning("agent file skipped", { filepath: file.filepath, reason: "markdown" })
     return
   }
-  const name = path
-    .relative(file.directory, file.filepath)
-    .replaceAll("\\", "/")
-    .replace(/^(agent|agents|mode|modes)\//, "")
-    .replace(/\.md$/, "")
+  const name = file.name
   const body = markdown.content.trim()
   const keys = Object.keys(markdown.data)
   const unsupported = keys.filter((key) => !agentKeys.has(key))

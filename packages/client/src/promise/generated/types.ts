@@ -2515,6 +2515,12 @@ export type ConfigEntry =
         }
         compaction?: { auto?: boolean; keep?: { tokens?: number }; buffer?: ConfigCompactionPercent | number }
         skills?: Array<string>
+        sources?: {
+          agents?: Array<string>
+          plugins?: Array<string>
+          load_global?: boolean
+          load_only_selected?: boolean
+        }
         commands?: {
           [x: string]: {
             template: string
@@ -2595,6 +2601,7 @@ export type ConfigEntry =
           artifacts?: boolean
           console_watches?: boolean
           mcp_events?: boolean
+          config_sources?: boolean
           part_rows?: boolean
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number

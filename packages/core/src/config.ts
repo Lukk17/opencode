@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from "node:util"
 import { applyEdits, modify, type ParseError, parse } from "jsonc-parser"
 import { Context, Effect, FiberMap, Layer, Option, PubSub, Ref, Schema, Semaphore, Stream } from "effect"
 import { Directory, Document, Info, type Patch, type Entry, Event } from "@opencode/schema/config"
+import { ConfigSources } from "@opencode/schema/config/sources"
+import { App } from "./app.js"
 import { Credential } from "./credential.js"
 import { Bus } from "./bus.js"
 import { Watcher } from "./filesystem/watcher.js"
@@ -19,6 +21,7 @@ import { ConfigDiscovery } from "./config/discovery.js"
 import { ConfigWatch } from "./config/watch.js"
 import { ConfigIntegration } from "./config/integration.js"
 import { ConfigManaged } from "./config/managed.js"
+import { ConfigSourcePath } from "./config/source-path.js"
 import { ManagedPolicy } from "./managed-policy.js"
 import { Connection } from "@opencode/schema/connection"
 import { WellKnown } from "./wellknown.js"
@@ -28,6 +31,179 @@ import { ChildProcess } from "effect/process"
 export function latest<K extends keyof Info>(entries: readonly Entry[], key: K): Info[K] | undefined {
   return entries.findLast((entry): entry is Document => entry.type === "document" && entry.info[key] !== undefined)
     ?.info[key]
+}
+
+/** Where Config loaded an entry from, in load order. */
+export type Scope =
+  | "policy"
+  | "integration"
+  | "wellknown"
+  | "global"
+  | "explicit"
+  | "direct"
+  | "project"
+  | "content"
+  | "managed"
+
+const scopes = new WeakMap<Entry, Scope>()
+
+/**
+ * Returns the scope Config loaded an entry from. Managed, integration and well-known documents are known by their
+ * class. An entry Config did not load, such as one built by hand, has no scope: it can neither switch global config
+ * off nor list sources.
+ */
+export function entryScope(entry: Entry): Scope | undefined {
+  if (entry instanceof ConfigIntegration.WellKnownDocument) return "wellknown"
+  if (entry instanceof ConfigIntegration.Document) return "integration"
+  if (entry instanceof ConfigManaged.Document) return scopes.get(entry) === "policy" ? "policy" : "managed"
+  return scopes.get(entry)
+}
+
+/** Records the scope `entries` load from. */
+export function scoped<A extends Entry>(scope: Scope, entries: readonly A[]) {
+  for (const entry of entries) scopes.set(entry, scope)
+  return entries
+}
+
+function switchesGlobal(entry: Entry) {
+  const scope = entryScope(entry)
+  return scope === "explicit" || scope === "direct" || scope === "project" || scope === "content"
+}
+
+/** Whether managed config, such as the system folder, loaded the entry. `load_only_selected` never skips it. */
+export function isManaged(entry: Entry) {
+  const scope = entryScope(entry)
+  return scope === "managed" || scope === "policy"
+}
+
+/** Whether global or managed config sets `experimental.config_sources: false`, which only `OPENCODE_FLAGS` overrides. */
+export function forbidsSources(entries: readonly Entry[]) {
+  return entries.some(
+    (entry) =>
+      entry.type === "document" &&
+      (entryScope(entry) === "global" || isManaged(entry)) &&
+      entry.info.experimental?.config_sources === false,
+  )
+}
+
+/** A document that lists `sources.agents` or `sources.plugins`, with the directory its relative entries resolve against. */
+export interface SourceGroup {
+  readonly document: Document
+  readonly base?: AbsolutePath
+  /** Project config lists only directories whose real path is inside the project. */
+  readonly project: boolean
+  readonly agents?: readonly string[]
+  readonly plugins?: readonly string[]
+}
+
+/** Groups the documents that list `sources.agents` or `sources.plugins`, lowest priority first. Only local and managed config list sources. */
+export function sourceGroups(entries: readonly Entry[]): SourceGroup[] {
+  return entries.flatMap((entry): SourceGroup[] => {
+    const scope = entryScope(entry)
+    if (entry.type !== "document" || scope === undefined || scope === "wellknown" || scope === "integration") return []
+    const agents = entry.info.sources?.agents
+    const plugins = entry.info.sources?.plugins
+    if (agents === undefined && plugins === undefined) return []
+    return [
+      {
+        document: entry,
+        ...(entry.path === undefined ? {} : { base: AbsolutePath.make(path.dirname(entry.path)) }),
+        project: scope === "direct" || scope === "project",
+        ...(agents === undefined ? {} : { agents }),
+        ...(plugins === undefined ? {} : { plugins }),
+      },
+    ]
+  })
+}
+
+/**
+ * Resolves the effective `sources` values. `load_global` is read only from explicit, direct, project and content
+ * config, and remote config sets none of them.
+ */
+export function effectiveSources(entries: readonly Entry[]): ConfigSources.Info {
+  const documents = entries.filter((entry): entry is Document => entry.type === "document")
+  const groups = sourceGroups(entries)
+  const loadGlobal = documents.findLast(
+    (document) => switchesGlobal(document) && document.info.sources?.load_global !== undefined,
+  )?.info.sources?.load_global
+  const loadOnlySelected = documents.findLast((document) => {
+    const scope = entryScope(document)
+    return (
+      scope !== undefined &&
+      scope !== "wellknown" &&
+      scope !== "integration" &&
+      document.info.sources?.load_only_selected !== undefined
+    )
+  })?.info.sources?.load_only_selected
+  return new ConfigSources.Info({
+    ...(groups.some((group) => group.agents !== undefined)
+      ? { agents: groups.flatMap((group) => group.agents ?? []) }
+      : {}),
+    ...(groups.some((group) => group.plugins !== undefined)
+      ? { plugins: groups.flatMap((group) => group.plugins ?? []) }
+      : {}),
+    ...(loadGlobal === undefined ? {} : { load_global: loadGlobal }),
+    ...(loadOnlySelected === undefined ? {} : { load_only_selected: loadOnlySelected }),
+  })
+}
+
+/**
+ * Whether the global config loads. It does not when local config sets `sources.load_global: false` and the
+ * `config_sources` flag is on both with and without the global config documents.
+ */
+export function loadsGlobal(entries: readonly Entry[], enabled: (entries: readonly Entry[]) => boolean) {
+  if (effectiveSources(entries).load_global !== false || !enabled(entries)) return true
+  return !enabled(entries.filter((entry) => entryScope(entry) !== "global"))
+}
+
+function ignoredLoadGlobal(entries: readonly Entry[]) {
+  return entries.flatMap((entry) =>
+    entry.type === "document" && entry.info.sources?.load_global !== undefined && !switchesGlobal(entry)
+      ? [
+          [
+            JSON.stringify([entryScope(entry), entry.path, "integrationID" in entry ? entry.integrationID : undefined]),
+            {
+              source: entry.path,
+              scope: entryScope(entry),
+              path: "$.sources.load_global",
+              kind: "unsupported",
+              action: `ignored load_global from ${entryScope(entry) ?? "unknown"} config because only project, explicit and content config can switch global config off`,
+            },
+          ] as const,
+        ]
+      : [],
+  )
+}
+
+function listedPathDiagnostics(entries: readonly Entry[], directory: string, home: string) {
+  return ConfigSourcePath.keyed(
+    sourceGroups(entries).flatMap((group) =>
+      (["agents", "plugins"] as const).flatMap((kind) => {
+        const items = group[kind]
+        if (items === undefined) return []
+        const listed = ConfigSourcePath.list(items, group.base ?? directory, home)
+        const details = { source: group.document.path, scope: entryScope(group.document) }
+        return [
+          ...listed.rejected.map((item) => ({
+            ...details,
+            path: `$.sources.${kind}[${item.index}]`,
+            kind: "rejected",
+            action: `ignored ${item.entry} because it ${ConfigSourcePath.reasons[item.reason]}`,
+          })),
+          ...(listed.dropped === 0
+            ? []
+            : [
+                {
+                  ...details,
+                  path: `$.sources.${kind}`,
+                  kind: "truncated",
+                  action: `ignored ${listed.dropped} entries after the first ${ConfigSourcePath.maxEntries}`,
+                },
+              ]),
+        ]
+      }),
+    ),
+  )
 }
 
 export interface Interface {
@@ -128,6 +304,11 @@ export const layer = (options?: Options) =>
       const globalService = yield* Global.Service
       const wellknown = yield* WellKnown.Service
       const processes = yield* AppProcess.Service
+      const app = yield* App.Service
+      const { Flag } = yield* Effect.promise(() => import("./flag.js"))
+      const overrides = yield* Flag.Overrides
+      const sourcesEnabled = (entries: readonly Entry[]) =>
+        Flag.resolve({ entries, channel: app.channel, overrides }).config_sources.enabled
       const integrations = new Map<string, ConfigIntegration.Document>()
       // Integrations set their documents from outside this layer, so their reloads run with its services.
       const context = yield* Effect.context<FSUtil.Service | Global.Service | Location.Service>()
@@ -365,21 +546,81 @@ export const layer = (options?: Options) =>
           ),
         )
         return [
-          ...managedPolicies,
+          ...scoped("policy", managedPolicies),
           ...integrated,
           ...wellknownDocuments.flat(),
-          ...globalSupplementary,
-          ...explicit,
-          ...direct,
-          ...projectSupplementary,
-          ...content,
-          ...managedSettings,
+          ...scoped("global", globalSupplementary),
+          ...scoped("explicit", explicit),
+          ...scoped("direct", direct),
+          ...scoped("project", projectSupplementary),
+          ...scoped("content", content),
+          ...scoped("managed", managedSettings),
         ]
       })
 
-      const initial = yield* ConfigDiscovery.discover(options)
-      let sources = initial
-      let configs = yield* load(initial)
+      const warned = { keys: new Set<string>() }
+      const loadAll = Effect.fn("Config.loadAll")(function* () {
+        const discovered = yield* ConfigDiscovery.discover(options)
+        const loaded = yield* load(discovered)
+        if (!sourcesEnabled(loaded)) return { discovery: discovered, loaded }
+        const local =
+          discovered.global !== undefined && effectiveSources(loaded).load_global === false
+            ? yield* ConfigDiscovery.discover({ ...options, global: false })
+            : undefined
+        if (local) {
+          const direct = new Set<string>(local.direct)
+          const project = new Set<string>(local.project.map((root) => root.path))
+          scoped(
+            "global",
+            loaded.filter((entry) => {
+              const scope = entryScope(entry)
+              if (scope === "direct" && entry.type === "document") return !direct.has(entry.path ?? "")
+              if (scope !== "project") return false
+              return !project.has(entry.type === "directory" ? entry.path : path.dirname(entry.path ?? ""))
+            }),
+          )
+        }
+        const result =
+          local === undefined || loadsGlobal(loaded, sourcesEnabled)
+            ? { discovery: discovered, loaded }
+            : {
+                discovery: {
+                  ...local,
+                  global: discovered.global,
+                  system: discovered.system,
+                  preferences: discovered.preferences,
+                },
+                loaded: loaded.flatMap((entry): Entry[] => {
+                  if (entryScope(entry) !== "global") return [entry]
+                  if (
+                    entry.type !== "document" ||
+                    (entry.info.policies === undefined && entry.info.permissions === undefined)
+                  )
+                    return []
+                  return [
+                    ...scoped("global", [
+                      new Document({
+                        type: "document",
+                        ...(entry.path === undefined ? {} : { path: entry.path }),
+                        info: new Info({ policies: entry.info.policies, permissions: entry.info.permissions }),
+                      }),
+                    ]),
+                  ]
+                }),
+              }
+        warned.keys = yield* ConfigSourcePath.warn(
+          warned.keys,
+          new Map([
+            ...ignoredLoadGlobal(loaded),
+            ...listedPathDiagnostics(result.loaded, location.directory, globalService.home),
+          ]),
+        )
+        return result
+      })
+
+      const initial = yield* loadAll()
+      let discovery = initial.discovery
+      let configs = initial.loaded
       const updates = yield* PubSub.unbounded<Watcher.Update>()
       const reloads = yield* PubSub.sliding<void>(1)
       // Readiness rescans recover writes made before a watch attached.
@@ -404,15 +645,14 @@ export const layer = (options?: Options) =>
 
       const reload = Effect.fn("Config.reload")(
         function* () {
-          const discovered = yield* ConfigDiscovery.discover(options)
-          const next = yield* load(discovered)
-          yield* reconcile(discovered)
+          const next = yield* loadAll()
+          yield* reconcile(next.discovery)
           const compatibilityChanged =
-            !isDeepStrictEqual(sources.claude, discovered.claude) ||
-            !isDeepStrictEqual(sources.agents, discovered.agents)
-          if (isDeepStrictEqual(configs, next) && !compatibilityChanged) return
-          sources = discovered
-          configs = next
+            !isDeepStrictEqual(discovery.claude, next.discovery.claude) ||
+            !isDeepStrictEqual(discovery.agents, next.discovery.agents)
+          if (isDeepStrictEqual(configs, next.loaded) && !compatibilityChanged) return
+          discovery = next.discovery
+          configs = next.loaded
           yield* bus.publish(Event.Updated, {})
         },
         (effect) => reloadLock.withPermit(effect),
@@ -464,11 +704,11 @@ export const layer = (options?: Options) =>
         Effect.forever,
         Effect.forkScoped({ startImmediately: true }),
       )
-      yield* reloadLock.withPermit(reconcile(initial))
+      yield* reloadLock.withPermit(reconcile(initial.discovery))
 
       const update = Effect.fn("Config.update")(
         function* (patch: Patch) {
-          const directory = initial.global ?? AbsolutePath.make(globalService.config)
+          const directory = initial.discovery.global ?? AbsolutePath.make(globalService.config)
           const candidates = ConfigDiscovery.names.map((name) => path.join(directory, name))
           const filepath =
             (yield* Effect.filter(candidates, fs.isFile)).at(-1) ?? path.join(directory, "opencode.jsonc")
@@ -495,8 +735,8 @@ export const layer = (options?: Options) =>
         }),
         compatibility: () =>
           Effect.all({
-            claude: Effect.filter(sources.claude, fs.isDir),
-            agents: Effect.filter(sources.agents, fs.isDir),
+            claude: Effect.filter(discovery.claude, fs.isDir),
+            agents: Effect.filter(discovery.agents, fs.isDir),
           }),
         changes: () => Stream.fromPubSub(updates),
         update,
@@ -526,6 +766,7 @@ export function configured(options?: Options) {
       Credential.node,
       WellKnown.node,
       AppProcess.node,
+      App.node,
     ],
   })
 }

@@ -16573,6 +16573,32 @@
               "type": "string"
             }
           },
+          "sources": {
+            "type": "object",
+            "properties": {
+              "agents": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "plugins": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "load_global": {
+                "type": "boolean"
+              },
+              "load_only_selected": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
           "commands": {
             "type": "object",
             "additionalProperties": {
@@ -16675,6 +16701,9 @@
                 "type": "boolean"
               },
               "mcp_events": {
+                "type": "boolean"
+              },
+              "config_sources": {
                 "type": "boolean"
               },
               "part_rows": {

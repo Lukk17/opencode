@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, PlatformError, PubSub, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, PlatformError, PubSub, Schema, Stream } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import fs from "fs/promises"
 import path from "path"
@@ -8,10 +8,11 @@ import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
 import { ConfigInstructionPlugin } from "@opencode/core/config/plugin/instruction"
 import { Watcher } from "@opencode/core/filesystem/watcher"
+import { Flag } from "@opencode/core/flag"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { Location } from "@opencode/core/location"
 import { AbsolutePath } from "@opencode/core/schema"
-import { Document, Info } from "@opencode/schema/config"
+import { Document, type Entry, Info } from "@opencode/schema/config"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
@@ -31,17 +32,19 @@ const instructionLayer = (input: {
   locationServiceLayer: Layer.Layer<Location.Service>
   filesystemLayer?: Layer.Layer<FSUtil.Service>
   instructions?: string[]
+  entries?: Entry[]
   http?: HttpClient.HttpClient
   project?: boolean
 }) => {
   const watcher = Watcher.testLayer
-  const config = Config.testLayer(input.instructions ? [configured(input.instructions)] : [])
+  const config = Config.testLayer(input.entries ?? (input.instructions ? [configured(input.instructions)] : []))
   return Layer.mergeAll(
     AppNodeBuilder.build(
       LayerNode.group([
         InstructionDiscovery.node,
         Bus.node,
         Config.node,
+        Flag.node,
         FSUtil.node,
         Global.node,
         Location.node,
@@ -722,4 +725,81 @@ describe("ConfigInstructionPlugin.Plugin", () => {
       expect(observed.values).toEqual([{ targets: ["AGENTS.md"], start: repo, stop: repo, type: "file" }])
     }),
   )
+})
+
+describe("InstructionDiscovery config sources", () => {
+  for (const item of [
+    {
+      name: "skips the global AGENTS.md when load_global is false and the flag is on",
+      flag: true,
+      sources: { load_global: false },
+      global: false,
+    },
+    {
+      name: "keeps the global AGENTS.md when the config_sources flag is off",
+      flag: false,
+      sources: { load_global: false },
+      global: true,
+    },
+    {
+      name: "keeps the global AGENTS.md when only load_only_selected is set",
+      flag: true,
+      sources: { load_only_selected: true },
+      global: true,
+    },
+  ])
+    it.live(item.name, () =>
+      tmpdirScoped().pipe(
+        Effect.flatMap((tmp) => {
+          const global = path.join(tmp.path, "global")
+          const project = path.join(tmp.path, "repo")
+          const globalFile = path.join(global, "AGENTS.md")
+          const projectFile = path.join(project, "AGENTS.md")
+          return Effect.gen(function* () {
+            yield* Effect.promise(async () => {
+              await fs.mkdir(global, { recursive: true })
+              await fs.mkdir(project, { recursive: true })
+              await fs.writeFile(globalFile, "global")
+              await fs.writeFile(projectFile, "project")
+            })
+
+            const discovery = yield* start()
+
+            expect((yield* readInitial(yield* discovery.load())).text).toBe(
+              [
+                ...(item.global ? [`Instructions from: ${globalFile}\nglobal`] : []),
+                `Instructions from: ${projectFile}\nproject`,
+              ].join("\n\n"),
+            )
+          }).pipe(
+            Effect.provide(
+              instructionLayer({
+                config: global,
+                home: path.join(tmp.path, "home"),
+                entries: [
+                  ...Config.scoped("project", [
+                    new Document({
+                      type: "document",
+                      info: Schema.decodeUnknownSync(Info)({
+                        sources: item.sources,
+                        ...(item.flag ? { experimental: { config_sources: true } } : {}),
+                      }),
+                    }),
+                  ]),
+                ],
+                locationServiceLayer: Layer.succeed(
+                  Location.Service,
+                  Location.Service.of(
+                    location(
+                      { directory: AbsolutePath.make(project) },
+                      { projectDirectory: AbsolutePath.make(project) },
+                    ),
+                  ),
+                ),
+              }),
+            ),
+          )
+        }),
+      ),
+    )
 })

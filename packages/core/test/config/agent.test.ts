@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Effect, Fiber, Schema, Stream } from "effect"
+import { Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { Watcher } from "@opencode/core/filesystem/watcher"
+import { Flag } from "@opencode/core/flag"
 import { Directory, Document, Event, Info } from "@opencode/schema/config"
 import { Model } from "@opencode/schema/model"
 import { ConfigAgentPlugin } from "@opencode/core/config/plugin/agent"
@@ -22,7 +24,13 @@ import { tmpdir, tmpdirScoped } from "../fixture/tmpdir"
 import { testEffect } from "../lib/effect"
 import { agentHost, host } from "../plugin/host"
 
-const it = testEffect(AppNodeBuilder.build(LayerNode.group([Agent.node, Bus.node, FSUtil.node, Global.node])))
+const it = testEffect(
+  Layer.mergeAll(
+    AppNodeBuilder.build(LayerNode.group([Agent.node, Bus.node, FSUtil.node, Global.node])),
+    Flag.testLayer(),
+    Watcher.testLayer,
+  ),
+)
 const decode = Schema.decodeUnknownSync(Info)
 
 function migrateV1(input: unknown) {

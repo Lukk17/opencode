@@ -1,17 +1,21 @@
 export * as ConfigPluginSource from "./source.js"
 
-import { Directory, Document, type Entry } from "@opencode/schema/config"
+import { Document, type Entry } from "@opencode/schema/config"
 import { ConfigPlugin } from "@opencode/schema/config/plugin"
 import { FSUtil } from "@opencode/util/fs-util"
+import { Global } from "@opencode/util/global"
 import { Host } from "@opencode/plugin/host"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
-import { Context, Effect, Layer, Option, PubSub, Scope, Stream } from "effect"
+import { Context, Effect, FiberMap, Layer, Option, PubSub, Scope, Stream } from "effect"
 import path from "path"
 import { fileURLToPath, pathToFileURL } from "url"
 import { Config } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
+import { Flag } from "../../flag.js"
 import { Location } from "../../location.js"
 import { PluginSourceDirectory } from "../../plugin/source-directory.js"
+import { ConfigSourcePath } from "../source-path.js"
+import { ConfigSourceWatches } from "../source-watches.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 
 export type Operation =
@@ -38,22 +42,32 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* Config.Service
     const watcher = yield* Watcher.Service
+    const flags = yield* Flag.Service
     const fs = yield* FSUtil.Service
+    const global = yield* Global.Service
     const location = yield* Location.Service
     const configuredChanges = yield* PubSub.unbounded<void>()
+    const notify = PubSub.publish(configuredChanges, undefined).pipe(Effect.asVoid)
     const watched = new Set<string>()
+    const listedWatches = yield* FiberMap.make<string>()
+    const packageWatches = yield* FiberMap.make<string>()
+    const reported = { keys: new Set<string>() }
 
-    // Configured local plugins can live outside config roots, where the
-    // config change feed cannot see them; watch those targets directly.
-    // Watches start on first sighting and are never torn down individually:
-    // a stale watch after a config edit costs one deduped fs handle and a
-    // no-op activation, and every watch dies with this layer's scope.
+    // Configured local plugins and listed sources.plugins directories can live
+    // outside config roots, where the config change feed cannot see them;
+    // watch those targets directly.
+    // Configured plugin watches start on first sighting and are never torn down
+    // individually: a stale watch after a config edit costs one deduped fs
+    // handle and a no-op activation, and every watch dies with this layer's
+    // scope.
     const watchConfiguredSources = Effect.fn("ConfigPluginSource.watchConfiguredSources")(function* (
       entries: readonly Entry[],
+      listed: readonly string[],
       operations: readonly Operation[],
     ) {
       for (const operation of operations) {
         if (operation.type !== "add" || !path.isAbsolute(operation.target)) continue
+        if (listed.some((directory) => FSUtil.contains(directory, operation.target))) continue
         if (watched.has(operation.target)) continue
         // The config change feed already covers {plugin,plugins} directories.
         if (ConfigEntryObserver.isDirectorySource(entries, operation.target, PluginSourceDirectory.names)) continue
@@ -72,11 +86,85 @@ export const layer = Layer.effect(
       }
     })
 
+    const watchListed = Effect.fn("ConfigPluginSource.watchListed")(function* (
+      entries: readonly Entry[],
+      listed: readonly string[],
+    ) {
+      const targets = new Map<string, Watcher.WatchInput>()
+      for (const target of listed) {
+        if (ConfigEntryObserver.isDirectorySource(entries, target, PluginSourceDirectory.names)) continue
+        const type = (yield* fs.isDir(target)) ? "entries" : "file"
+        targets.set(`${type}:${target}`, { path: target, type })
+      }
+      yield* ConfigSourceWatches.sync(watcher, listedWatches, targets, notify)
+    })
+
+    const watchPackages = Effect.fn("ConfigPluginSource.watchPackages")(function* (
+      entries: readonly Entry[],
+      children: readonly string[],
+    ) {
+      const folders = yield* Effect.filter(
+        children.filter((child) => !ConfigEntryObserver.isDirectorySource(entries, child, PluginSourceDirectory.names)),
+        fs.isDir,
+      )
+      yield* ConfigSourceWatches.sync(
+        watcher,
+        packageWatches,
+        new Map(folders.map((folder) => [folder, { path: folder, type: "entries" as const, names: ["package.json"] }])),
+        notify,
+      )
+    })
+
+    const select = Effect.fnUntraced(function* (entries: readonly Entry[]) {
+      const groups = yield* Effect.forEach(Config.sourceGroups(entries), (group) =>
+        group.plugins === undefined
+          ? Effect.succeed([])
+          : ConfigSourcePath.directories(
+              fs,
+              { source: group.document.path, kind: "plugins" },
+              group.plugins,
+              group.base ?? location.directory,
+              global.home,
+              group.project ? location.project.directory : undefined,
+            ).pipe(Effect.map((listed) => [{ document: group.document, ...listed }])),
+      ).pipe(Effect.map((groups) => groups.flat()))
+      const directories = groups.flatMap((group) => group.directories)
+      yield* watchListed(entries, directories)
+      const read = yield* Effect.forEach(groups, (group) =>
+        Effect.forEach(group.directories, (directory) =>
+          PluginSourceDirectory.children(fs, directory).pipe(
+            Effect.map((found) =>
+              ConfigSourcePath.files({ source: group.document.path, kind: "plugins" }, directory, found),
+            ),
+          ),
+        ).pipe(Effect.map((children) => ({ document: group.document, children }))),
+      )
+      yield* watchPackages(
+        entries,
+        read.flatMap((group) => group.children.flatMap((child) => child.files)),
+      )
+      reported.keys = yield* ConfigSourcePath.warn(
+        reported.keys,
+        ConfigSourcePath.keyed([
+          ...groups.flatMap((group) => group.diagnostics),
+          ...read.flatMap((group) => group.children.flatMap((child) => child.diagnostics)),
+        ]),
+      )
+      return {
+        selected: Config.effectiveSources(entries).load_only_selected === true,
+        directories,
+        listed: new Map(read.map((group) => [group.document, group.children.flatMap((child) => child.files)] as const)),
+      } satisfies Selection
+    })
+
     return Service.of({
       operations: Effect.fn("ConfigPluginSource.operations")(function* () {
         const entries = yield* config.entries()
-        const operations = yield* scan(fs, location, entries)
-        yield* watchConfiguredSources(entries, operations)
+        const enabled = flags.resolve(entries).config_sources.enabled
+        if (!enabled) yield* Effect.all([watchListed(entries, []), watchPackages(entries, [])])
+        const selection = enabled ? yield* select(entries) : undefined
+        const operations = yield* scan(fs, location, entries, selection)
+        yield* watchConfiguredSources(entries, selection?.directories ?? [], operations)
         return operations
       }),
       changes: () =>
@@ -98,7 +186,7 @@ export const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Config.node, FSUtil.node, Watcher.node, Location.node],
+  deps: [Config.node, Flag.node, FSUtil.node, Watcher.node, Global.node, Location.node],
 })
 
 export const empty = makeLocationNode({
@@ -122,18 +210,33 @@ function parse(input: ConfigPlugin.Plugin): Operation {
   return { type: "remove", target: input.slice(1) }
 }
 
+interface Selection {
+  readonly selected: boolean
+  readonly directories: readonly string[]
+  readonly listed: ReadonlyMap<Entry, readonly string[]>
+}
+
 const scan = Effect.fn("ConfigPluginSource.scan")(function* (
   fs: FSUtil.Interface,
   location: Location.Interface,
   entries: readonly Entry[],
+  selection: Selection | undefined,
 ) {
-  const discovered = yield* Effect.forEach(
-    entries.filter((entry): entry is Directory => entry.type === "directory"),
-    (entry) =>
-      PluginSourceDirectory.discover(fs, entry.path).pipe(
-        Effect.map((targets) => targets.map((target): Operation => ({ type: "add", target, options: {} }))),
-      ),
-  ).pipe(Effect.map((items) => items.flat()))
+  const discovered = yield* Effect.forEach(entries, (entry) =>
+    Effect.gen(function* () {
+      if (entry.type === "directory") {
+        if (!selection?.selected || Config.isManaged(entry))
+          return yield* PluginSourceDirectory.discover(fs, entry.path)
+        yield* Effect.logDebug("default source root skipped", {
+          kind: "plugins",
+          root: entry.path,
+          reason: "load_only_selected",
+        })
+        return []
+      }
+      return selection?.listed.get(entry) ?? []
+    }),
+  ).pipe(Effect.map((targets) => targets.flat().map((target): Operation => ({ type: "add", target, options: {} }))))
   const configured = entries
     .filter((entry): entry is Document => entry.type === "document")
     .flatMap((entry) =>
