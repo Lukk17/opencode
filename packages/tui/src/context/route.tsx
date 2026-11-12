@@ -15,6 +15,8 @@ export type SessionRoute = {
   type: "session"
   sessionID: string
   prompt?: PromptInfo
+  /** Open the transcript at the start of its last answer instead of the saved position. */
+  lastAnswer?: boolean
 }
 
 export type PluginRoute = {

@@ -3,6 +3,7 @@ import { useLocation } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { frameLoop } from "@opencode/ui/motion"
+import { Timeline } from "@opencode/session-ui/timeline/projection"
 import type { SessionModel } from "../model"
 import { createTimelineCursor } from "./cursor"
 import { cursorMessageID, freshCursorMessageID, hasFreshCursorOrSeek, SCROLL_MOVED_EVENT } from "./cursor-machine"
@@ -28,7 +29,7 @@ import { createTimelineModel } from "./model"
 
 /** `visible`: the conversation is on screen, not behind another narrow-screen view. */
 export function createSessionTimelineInteraction(session: SessionModel, visible: Accessor<boolean>) {
-  const location = useLocation<{ reveal?: string }>()
+  const location = useLocation<{ reveal?: string; revealLastAnswer?: boolean; entry?: string }>()
   const timeline = createTimelineModel({ session })
 
   const [state, setState] = createStore<{
@@ -61,7 +62,15 @@ export function createSessionTimelineInteraction(session: SessionModel, visible:
   let scroller: HTMLDivElement | undefined
   const [revealState, setRevealState] = createSignal(createRouteRevealState())
   createEffect(() => {
-    const event = { type: "route.synced", entryKey: location.key, target: location.state?.reveal } as const
+    const event = {
+      type: "route.synced",
+      entryKey: location.state?.entry ?? "",
+      target:
+        location.state?.revealLastAnswer && timeline.ready()
+          ? untrack(() => Timeline.lastAnswer(timeline.messages()))
+          : location.state?.reveal,
+    } as const
+
     setRevealState((current) => transitionRouteReveal(current, event))
   })
 

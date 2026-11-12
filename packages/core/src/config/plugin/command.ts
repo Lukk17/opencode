@@ -14,6 +14,7 @@ import { Session } from "../../session.js"
 import { SubagentJob } from "../../session/subagent-job.js"
 import { ShellSelect } from "../../shell/select.js"
 import { FSUtil } from "@opencode/util/fs-util"
+import { SUBAGENT_TASK_METADATA } from "@opencode/util/subagent-task"
 import { ConfigMarkdown } from "../markdown.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 
@@ -84,6 +85,7 @@ export const Plugin = define({
                     ...input.prompt,
                     sessionID: child.id,
                     text: ["You are a subagent spawned by another session.", text].join("\n"),
+                    metadata: SUBAGENT_TASK_METADATA,
                     resume: false,
                   })
                   const recovery = {

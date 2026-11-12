@@ -491,3 +491,14 @@ export function resolvePart(message: SessionMessageAssistant, partID: string) {
   const ordinal = Number(match[2])
   return message.content.filter((part) => part.type === match[1])[ordinal]
 }
+
+/** The part a session's last answer starts at: its newest assistant text. */
+export function lastAnswer(messages: readonly SessionMessageInfo[]): PartRef | undefined {
+  const message = messages.findLast(
+    (message): message is SessionMessageAssistant =>
+      message.type === "assistant" && message.content.some((part) => part.type === "text" && !!part.text.trim()),
+  )
+  if (!message) return
+  const ordinal = message.content.filter((part) => part.type === "text").findLastIndex((part) => !!part.text.trim())
+  return { messageID: message.id, partID: `text:${ordinal}` }
+}

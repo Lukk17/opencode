@@ -190,6 +190,7 @@ export const Definitions = {
   "session.message.previous": keybind("none", "Navigate to previous message"),
   "session.message.user.next": keybind("none", "Navigate to next user message"),
   "session.message.user.previous": keybind("none", "Navigate to previous user message"),
+  "session.message.toggle": keybind("none", "Toggle nearest collapsed message"),
   "session.messages_last_user": keybind("alt+end", "Navigate to last user message"),
   "messages.copy": keybind("<leader>y", "Copy message"),
   "session.undo": keybind("<leader>u", "Undo message"),

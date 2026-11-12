@@ -322,6 +322,8 @@ function mount(input: {
                 anchors: input.anchors,
                 groupExpanded: input.expanded,
                 setGroupExpanded: input.setExpanded,
+                messageOpen: () => false,
+                setMessageOpen: () => {},
                 thinkingMode: () => "hide",
                 markdownMode: () => "rendered",
                 groupExploration: () => true,

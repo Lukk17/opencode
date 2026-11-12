@@ -84,7 +84,9 @@ export function SessionUIProvider(
       const tab = effect.origin.sessionID ? tabs.sessionTab(effect.origin.server, effect.origin.sessionID) : undefined
 
       if (tab?.type === "session") tabs.rememberSessionRoute(tab, effect.targetSessionID, effect.origin.sessionID)
-      navigate(sessionHref(effect.origin.server, effect.targetSessionID))
+      navigate(sessionHref(effect.origin.server, effect.targetSessionID), {
+        state: { revealLastAnswer: true, entry: crypto.randomUUID() },
+      })
 
       return
     }

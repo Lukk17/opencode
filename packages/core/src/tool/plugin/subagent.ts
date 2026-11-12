@@ -3,6 +3,7 @@ export * as SubagentTool from "./subagent.js"
 import { ToolFailure } from "@opencode/ai/effect"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
+import { SUBAGENT_TASK_METADATA } from "@opencode/util/subagent-task"
 import { Effect, Predicate, Schema } from "effect"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
@@ -205,6 +206,7 @@ export const Plugin = {
                     existing === undefined
                       ? ["You are a subagent spawned by another session.", input.prompt].join("\n")
                       : input.prompt,
+                  metadata: SUBAGENT_TASK_METADATA,
                   ...(running ? {} : { resume: false }),
                 })
                 .pipe(

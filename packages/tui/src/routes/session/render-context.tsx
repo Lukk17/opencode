@@ -24,6 +24,10 @@ export const context = createContext<{
   groupExpanded: (groupID: string, kind: GroupKind) => boolean
   /** An anchor keeps its viewport row through the layout change the toggle causes. */
   setGroupExpanded: (groupID: string, expanded: boolean, anchor?: Renderable | null) => void
+  /** Whether a collapsed message shows its full text. */
+  messageOpen: (messageID: string) => boolean
+  /** An anchor keeps its viewport row through the layout change the toggle causes. */
+  setMessageOpen: (messageID: string, open: boolean, anchor?: Renderable | null) => void
   thinkingMode: () => ThinkingMode
   markdownMode: () => "source" | "rendered"
   groupExploration: () => boolean

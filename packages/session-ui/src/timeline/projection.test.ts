@@ -121,6 +121,30 @@ describe("Timeline.resolveContent", () => {
   })
 })
 
+test("Timeline.lastAnswer names the newest assistant text of a session", () => {
+  const step = (id: string, content: SessionMessageAssistant["content"]): SessionMessageAssistant => ({
+    id,
+    type: "assistant",
+    agent: "build",
+    model: { id: "model", providerID: "provider" },
+    content,
+    time: { created: 0 },
+  })
+
+  expect(
+    Timeline.lastAnswer([
+      { id: "task", type: "user", text: "Find the setting", time: { created: 0 } },
+      step("first", [{ type: "text", text: "Looking" }]),
+      step("last", [
+        { type: "text", text: "Found it" },
+        { type: "text", text: "" },
+        { type: "reasoning", text: "done", time: { created: 0 } },
+      ]),
+      { id: "note", type: "synthetic", text: "Background work finished", time: { created: 0 } },
+    ]),
+  ).toBe("last:text:0")
+})
+
 describe("reuseTimelineRows", () => {
   test.each([
     {

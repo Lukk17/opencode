@@ -91,6 +91,7 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
     const cancelledTabs = new Set<string>()
     const scrollAnchors = new Map<string, ScrollAnchor>()
     const [expandedGroups, setExpandedGroups] = createStore<Record<string, Record<string, boolean> | undefined>>({})
+    const [openMessages, setOpenMessages] = createStore<Record<string, Record<string, boolean> | undefined>>({})
 
     const onFocus = () => setFocused(true)
     const onBlur = () => setFocused(false)
@@ -352,6 +353,7 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
       family(target).forEach((id) => {
         scrollAnchors.delete(id)
         setExpandedGroups(id, undefined)
+        setOpenMessages(id, undefined)
       })
       const closed = closeSessionTab(state().tabs, target)
       const selected = navigate && current() === target
@@ -413,6 +415,12 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
       },
       setGroupExpanded(sessionID: string, groupID: string, expanded: boolean) {
         setExpandedGroups(sessionID, (current) => ({ ...current, [groupID]: expanded }))
+      },
+      messageOpen(sessionID: string, messageID: string) {
+        return openMessages[sessionID]?.[messageID] ?? false
+      },
+      setMessageOpen(sessionID: string, messageID: string, open: boolean) {
+        setOpenMessages(sessionID, (current) => ({ ...current, [messageID]: open }))
       },
       select(sessionID: string) {
         if (!enabled()) return

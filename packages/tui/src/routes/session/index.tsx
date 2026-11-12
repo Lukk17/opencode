@@ -26,6 +26,7 @@ import { PatchDiff } from "../../component/patch-diff"
 import { useTheme, useThemes } from "../../context/theme"
 import {
   BoxRenderable,
+  Renderable,
   ScrollBoxRenderable,
   addDefaultParsers,
   TextAttributes,
@@ -71,6 +72,7 @@ import { DialogImagePreview } from "../../component/dialog-image-preview"
 import { createMediaSource } from "../../component/media-source"
 import { statusLabel } from "../../component/dialog-workspace-file-changes"
 import { DialogMessage } from "./dialog-message"
+import { CollapsedMessage, collapsedMessage } from "./collapsed-message"
 import { DialogFork } from "./dialog-fork"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogGoUpsell } from "../../component/dialog-go-upsell"
@@ -107,6 +109,7 @@ import {
   cacheReuseDrop,
   completeGroupBoundary,
   createSessionRows,
+  lastAnswer,
   messageBoundaryIDs,
   resolvePart,
   sessionRowID,
@@ -573,8 +576,18 @@ export function Session(props: {
     if (anchor) sessionTabs.setScrollAnchor(sessionID, anchor)
     else sessionTabs.setScrollAnchor(sessionID, undefined)
   }
+  function setMessageOpen(messageID: string, open: boolean, anchor?: Renderable | null) {
+    const last = rows.findLast((row) => row.type !== "assistant-footer" && row.type !== "turn-usage")
+    const ending = last?.type === "message" && last.messageID === messageID
+    if (anchor && !(ending && !isAwayFromBottom())) afterLayout(scroll.anchor(anchor))
+    sessionTabs.setMessageOpen(sessionID, messageID, open)
+    afterLayout(saveScrollAnchor)
+  }
   function restoreScrollPosition() {
-    const anchor = sessionTabs.scrollAnchor(sessionID)
+    const answer = route.lastAnswer ? lastAnswer(messages()) : undefined
+    const anchor = answer
+      ? { target: { type: "part" as const, ref: answer }, screenY: 0 }
+      : sessionTabs.scrollAnchor(sessionID)
     const index = anchor ? rows.findIndex((row) => containsAnchor(row, anchor.target)) : -1
     if (!anchor || index === -1) {
       scroll.scrollTo(scroll.scrollHeight)
@@ -1050,6 +1063,33 @@ export function Session(props: {
         dialog.clear()
       },
     },
+    {
+      title: "Toggle nearest collapsed message",
+      id: "session.message.toggle",
+      group: "Session",
+      palette: undefined,
+      run: () => {
+        const top = scroll.viewport.y
+        const bottom = top + scroll.viewport.height
+        const middle = (top + bottom) / 2
+        const nearest = anchors
+          .list()
+          .flatMap((anchor) => {
+            if (anchor.target.type !== "part" || anchor.target.ref.partID !== "message") return []
+            if (anchor.node.y >= bottom || anchor.node.y + anchor.node.height <= top) return []
+            const message = data.session.message.get(route.sessionID, anchor.target.ref.messageID)
+            return message && collapsedMessage(message) ? [{ id: message.id, y: anchor.node.y }] : []
+          })
+          .toSorted((a, b) => Math.abs(a.y - middle) - Math.abs(b.y - middle))[0]
+        dialog.clear()
+        if (!nearest) return
+        setMessageOpen(
+          nearest.id,
+          !sessionTabs.messageOpen(route.sessionID, nearest.id),
+          scroll.getChildren().find((node) => node.y <= nearest.y && node.y + node.height > nearest.y),
+        )
+      },
+    },
   ]
 
   const baseCommands = createMemo(() => [
@@ -1491,6 +1531,8 @@ export function Session(props: {
           sessionTabs.setGroupExpanded(sessionID, id, expanded)
           afterLayout(saveScrollAnchor)
         },
+        messageOpen: (messageID) => sessionTabs.messageOpen(sessionID, messageID),
+        setMessageOpen,
         get width() {
           return contentWidth()
         },
@@ -1932,8 +1974,19 @@ function BackgroundToolHint(props: { messages: SessionMessageInfo[] }) {
 }
 
 function SessionMessageView(props: { message: SessionMessageInfo }) {
+  const ctx = use()
   return (
     <Switch>
+      <Match when={collapsedMessage(props.message)}>
+        {(collapsed) => (
+          <CollapsedMessage
+            label={collapsed().label}
+            text={collapsed().text}
+            open={ctx.messageOpen(props.message.id)}
+            onOpenChange={(open, bar) => ctx.setMessageOpen(props.message.id, open, bar)}
+          />
+        )}
+      </Match>
       <Match when={props.message.type === "user"}>
         <UserMessage message={props.message as SessionMessageUser} />
       </Match>
@@ -2150,7 +2203,7 @@ function SessionNoticeMessageV2(props: { message: SessionMessageInfo }) {
         onMouseUp={() => {
           if (renderer.getSelection()?.getSelectedText()) return
           const id = childID()
-          if (id) navigate({ type: "session", sessionID: id })
+          if (id) navigate({ type: "session", sessionID: id, lastAnswer: true })
         }}
       >
         <text wrapMode="none">
@@ -3334,7 +3387,7 @@ function Subagent(props: ToolProps) {
       part={props.part}
       onClick={() => {
         const id = sessionID()
-        if (id) navigate({ type: "session", sessionID: id })
+        if (id) navigate({ type: "session", sessionID: id, lastAnswer: true })
       }}
     >
       {`${continuation() ? "Continue subagent" : `${Locale.titlecase(stringValue(props.input.agent) ?? stringValue(props.input.subagent_type) ?? "General")} Subagent`} — ${description() ?? "Subagent"}${model() ? ` · ${model()}` : ""}`}

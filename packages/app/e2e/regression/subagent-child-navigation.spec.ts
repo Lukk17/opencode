@@ -1,7 +1,7 @@
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client/promise"
 import { timelinePresets } from "@opencode/session-ui/timeline/detail"
 import { expect, test, type Locator, type Page } from "@playwright/test"
-import { expectPath, SERVER, sessionHref } from "../utils/app"
+import { expectPath, pageMessagesFrom, SERVER, sessionHref } from "../utils/app"
 import { currentSession } from "../utils/mock-server"
 import { assistantMessage, session, sessionID, setupTimeline, textPart, userMessage } from "../utils/timeline"
 import { expectSessionTitle } from "../utils/waits"
@@ -114,6 +114,92 @@ test("navigates from a running subagent card without a background control", asyn
   await page.locator('[data-component="task-tool-card"]').click()
   await expect(page).toHaveURL(new RegExp(`/session/${runningChildID}$`))
   await expect(hint).toHaveCount(0)
+})
+
+test("opens a subagent on its last answer just below the session header", async ({ page }) => {
+  const answeredChildID = "ses_answered_child"
+
+  const step = (id: string, label: string): SessionMessageInfo => ({
+    id,
+    type: "assistant",
+    agent: "explore",
+    model: { id: "model", providerID: "provider" },
+    content: [
+      {
+        type: "text",
+        text: Array.from({ length: 40 }, (_, index) => `${index + 1}. ${label} ${index + 1}`).join("\n"),
+      },
+    ],
+    time: { created: 2, completed: 3 },
+  })
+
+  const parent: SessionMessageInfo[] = [
+    { id: "msg_user", type: "user", text: "Find the setting", time: { created: 1 } },
+    {
+      id: "msg_assistant",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content: [
+        {
+          type: "tool",
+          id: "call_subagent",
+          name: "subagent",
+          state: {
+            status: "completed",
+            input: { description: "Find the setting" },
+            metadata: { sessionID: answeredChildID },
+            content: [{ type: "text", text: "Found it" }],
+          },
+          time: { created: 2, completed: 3 },
+        },
+      ],
+      time: { created: 2, completed: 3 },
+    },
+  ]
+
+  await setupTimeline(page, {
+    viewport: { width: 1024, height: 768 },
+    settings: { timelineDetail: { ...timelinePresets[2].value, subagents: { placement: "separate" } } },
+    sessionMessages: parent,
+    pageMessages: pageMessagesFrom({
+      [sessionID]: parent,
+      [answeredChildID]: [
+        { id: "msg_child_user", type: "user", text: "Find the setting", time: { created: 1 } },
+        step("msg_child_search", "Search note"),
+        step("msg_child_answer", "Answer note"),
+      ],
+    }),
+    sessions: [session(), session({ id: answeredChildID, parentID: sessionID, title: "Find the setting" })],
+  })
+  const card = page.locator('[data-component="task-tool-card"]')
+  const fade = page.locator(".session-header-fade")
+  const answer = page.locator('[data-timeline-part-id="msg_child_answer:text:0"]')
+  const firstLine = answer.getByText("Answer note 1", { exact: true })
+
+  const expectAnswerBelowHeader = async () => {
+    await expect(page).toHaveURL(new RegExp(`/session/${answeredChildID}$`))
+    await expect(firstLine).toBeInViewport()
+    await expect
+      .poll(async () => {
+        const [strip, start] = await Promise.all([fade.boundingBox(), answer.boundingBox()])
+
+        return strip && start ? Math.round(start.y - (strip.y + strip.height)) : undefined
+      })
+      .toBe(0)
+    await firstLine.click({ trial: true })
+  }
+
+  await card.click()
+  await expectAnswerBelowHeader()
+
+  await answer.hover()
+  await page.mouse.wheel(0, 4000)
+  await expect(firstLine).not.toBeInViewport()
+  await page.keyboard.press("Escape")
+  await expect(page).toHaveURL(new RegExp(`/session/${sessionID}$`))
+  await card.click()
+  await expectAnswerBelowHeader()
 })
 
 test("opens a directly linked nested subagent in its root session tab", async ({ page }) => {

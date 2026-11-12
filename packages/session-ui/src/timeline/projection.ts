@@ -660,6 +660,13 @@ export namespace Timeline {
       content,
     }))
   }
+
+  /** The part ID of a session's last answer, its newest assistant text. */
+  export function lastAnswer(messages: readonly SessionMessageInfo[]) {
+    return messages
+      .flatMap((message) => (message.type === "assistant" ? contentEntries(message) : []))
+      .findLast((entry) => entry.content.type === "text" && !!entry.content.text.trim())?.id
+  }
 }
 
 const MAX_RETRY_AFTER_MS = 45 * 86_400_000

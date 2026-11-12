@@ -120,6 +120,14 @@ the background: the parent receives a report when a child goes idle, and again
 after each later round of work. The parent agent's `subagent` permissions control
 which agents it may launch; the child uses its own configured permissions.
 
+Opening a subagent from the parent session shows its child session at the start
+of its last answer. In the child session, each prompt from the parent agent shows
+as a one-line bar. Messages that OpenCode adds to any session, such as notes,
+skills, and instruction updates, show the same way. Click a bar to read the full
+text and click it again to collapse it. In the terminal app, the
+`session.message.toggle` command does the same for the nearest bar. The model
+still receives the full text.
+
 ```jsonc
 {
   "agents": {

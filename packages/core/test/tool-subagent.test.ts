@@ -9,6 +9,7 @@ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNodePlatform } from "@opencode/core/effect/app-node-platform"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
+import { SUBAGENT_TASK_METADATA } from "@opencode/util/subagent-task"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
@@ -527,6 +528,11 @@ describe("SubagentTool", () => {
               message.type === "user" ? [message.payload.text] : [],
             ),
           ).toEqual(["You are a subagent spawned by another session.\nreview this", "continue this"])
+          expect(
+            (yield* sessions.inbox(childID)).flatMap((message) =>
+              message.type === "user" ? [message.payload.metadata] : [],
+            ),
+          ).toEqual([SUBAGENT_TASK_METADATA, SUBAGENT_TASK_METADATA])
           expect(second).toMatchObject({
             status: "completed",
             output: { status: "running" },

@@ -497,8 +497,8 @@ export function createTimelineVirtualizer(input: Input) {
     return false
   }
 
-  // Scrolls to a tool call, named by its ID or by the shell ID a backgrounded shell call reports, and expands it and
-  // the collapsed context group that hides it. Returns whether the call is in the list.
+  // Scrolls to a part, named by its ID or by the shell ID a backgrounded shell call reports, and expands it and
+  // the collapsed context group that hides it. Returns whether the part is in the list.
   function revealPart(target: string) {
     if (!active()) return false
 
@@ -506,8 +506,8 @@ export function createTimelineVirtualizer(input: Input) {
       const content = Timeline.resolveContent(input.projection.messageByID().get(ref.messageID), ref.partID)
 
       return (
-        content?.type === "tool" &&
-        (content.id === target || (content.state.status !== "streaming" && content.state.metadata?.shellID === target))
+        ref.partID === target ||
+        (content?.type === "tool" && content.state.status !== "streaming" && content.state.metadata?.shellID === target)
       )
     }
 
@@ -1175,7 +1175,10 @@ export function createTimelineVirtualizer(input: Input) {
             if (window.getSelection()?.toString()) input.follow.dispatch({ type: "detach" })
           }}
           class="relative min-w-0 w-full h-full"
-          style={{ "--sticky-accordion-top": input.showHeader() ? "var(--session-header-height, 48px)" : "0px" }}
+          style={{
+            "--sticky-accordion-top": input.showHeader() ? "var(--session-header-height, 48px)" : "0px",
+            "--session-header-fade": input.showHeader() ? "16px" : "0px",
+          }}
         >
           <Show when={input.showHeader()} fallback={<div aria-hidden="true" class="h-4 md:hidden" />}>
             {props.header}

@@ -6,9 +6,9 @@ import type {
 } from "@opencode/client/promise"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { SessionTurn } from "@opencode/util/session-turn"
+import { isSubagentTask } from "@opencode/util/subagent-task"
 import { Option, Predicate, Schema } from "effect"
 import {
-  For,
   Match,
   Show,
   Switch,
@@ -52,6 +52,7 @@ import { SessionError } from "../components/session-error"
 import { timelineCategory, type TimelineDetail } from "./detail"
 import { currentToolFailed } from "../message/current-tool-state"
 import { userMessageRuns, userRunSpring } from "./user-runs"
+import { CollapsedMessage } from "../message/collapsed-message"
 import { attached } from "../components/message-file"
 import {
   createReactiveTimelineProjection,
@@ -650,7 +651,7 @@ export function createSessionTimelineRowRenderer(input: {
         }
       }
 
-      return { label: message.description ?? message.text }
+      return { label: message.description || i18n.t("ui.sessionTimeline.notice.instructionsUpdated") }
     }
 
     if (message.type !== "synthetic") return undefined
@@ -681,7 +682,7 @@ export function createSessionTimelineRowRenderer(input: {
       }
     }
 
-    return { label: message.description ?? message.text }
+    return { label: message.description || i18n.t("ui.sessionTimeline.notice.note") }
   }
 
   const Frame = (props: { row: FramedTimelineRow; grow?: boolean; children: JSX.Element }) => (
@@ -785,6 +786,15 @@ export function createSessionTimelineRowRenderer(input: {
 
     const clickable = createMemo(() => !!shellID() || !!(childID() && (data.navigateToSession || href())))
 
+    const collapsed = createMemo(() => {
+      const value = message()
+
+      if (clickable() || (value?.type !== "synthetic" && value?.type !== "system" && value?.type !== "skill")) return
+      const shown = content()
+
+      if (shown && !shown.outcome) return { ...shown, text: value.text }
+    })
+
     const open = () => {
       const shell = shellID()
 
@@ -821,77 +831,65 @@ export function createSessionTimelineRowRenderer(input: {
             </div>
           )}
         </Show>
+        <Show when={collapsed()}>
+          {(content) => (
+            <CollapsedMessage
+              label={content().label}
+              data={content().data}
+              items={content().items}
+              text={content().text}
+              open={!!input.disclosure.value(`notice-open:${props.messageID}`)}
+              onOpenChange={(open) => input.disclosure.set(`notice-open:${props.messageID}`, open)}
+              grouped={props.grouped}
+              class={inset()}
+            />
+          )}
+        </Show>
         <Show
           when={moved()}
           fallback={
             <Show
               when={model()}
               fallback={
-                <Show when={content()}>
+                <Show when={!collapsed() && content()}>
                   {(content) => (
-                    <Show
-                      when={content().items?.length}
-                      fallback={
-                        <Dynamic
-                          component={href() ? "a" : "div"}
-                          data-slot="session-timeline-notice"
-                          data-outcome={content().outcome}
-                          class={`block w-full truncate ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-v2-text-text-faint ${inset()}`}
-                          classList={{ "cursor-pointer hover:text-v2-text-text-base": clickable() }}
-                          href={href()}
-                          role={clickable() && !href() ? (shellID() ? "button" : "link") : undefined}
-                          tabIndex={clickable() && !href() ? 0 : undefined}
-                          onClick={navigate}
-                          onKeyDown={navigateKey}
-                        >
-                          <Show when={content().icon}>
-                            {(icon) => (
-                              <Icon
-                                name={icon()}
-                                size="normal"
-                                class={`inline-block align-top me-1.5 ${outcomeNoticeColor(content().outcome)}`}
-                              />
-                            )}
-                          </Show>
-                          <bdi
-                            dir="auto"
-                            class={`font-[530] ${outcomeNoticeColor(content().outcome)}`}
-                            classList={{ "text-v2-text-text-faint": message()?.type === "agent-switched" }}
-                          >
-                            {content().label}
-                          </bdi>
-                          <Show when={content().data}>
-                            {(data) => (
-                              <span classList={{ "ms-2": message()?.type === "agent-switched" }}>
-                                <Show when={message()?.type !== "agent-switched"}>{" · "}</Show>
-                                <bdi dir="auto">{data()}</bdi>
-                              </span>
-                            )}
-                          </Show>
-                        </Dynamic>
-                      }
+                    <Dynamic
+                      component={href() ? "a" : "div"}
+                      data-slot="session-timeline-notice"
+                      data-outcome={content().outcome}
+                      class={`block w-full truncate ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-v2-text-text-faint ${inset()}`}
+                      classList={{ "cursor-pointer hover:text-v2-text-text-base": clickable() }}
+                      href={href()}
+                      role={clickable() && !href() ? (shellID() ? "button" : "link") : undefined}
+                      tabIndex={clickable() && !href() ? 0 : undefined}
+                      onClick={navigate}
+                      onKeyDown={navigateKey}
                     >
-                      <div data-slot="session-timeline-notice" class={`w-full py-1 ${inset()}`}>
-                        <div class="flex min-h-5 min-w-0 items-center gap-2 overflow-hidden">
-                          <bdi
-                            dir="auto"
-                            class="shrink-0 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
-                          >
-                            {content().label}
-                          </bdi>
-                          <For each={content().items}>
-                            {(item) => (
-                              <bdi
-                                dir="auto"
-                                class="min-w-0 truncate text-[13px] font-[440] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
-                              >
-                                {item}
-                              </bdi>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
+                      <Show when={content().icon}>
+                        {(icon) => (
+                          <Icon
+                            name={icon()}
+                            size="normal"
+                            class={`inline-block align-top me-1.5 ${outcomeNoticeColor(content().outcome)}`}
+                          />
+                        )}
+                      </Show>
+                      <bdi
+                        dir="auto"
+                        class={`font-[530] ${outcomeNoticeColor(content().outcome)}`}
+                        classList={{ "text-v2-text-text-faint": message()?.type === "agent-switched" }}
+                      >
+                        {content().label}
+                      </bdi>
+                      <Show when={content().data}>
+                        {(data) => (
+                          <span classList={{ "ms-2": message()?.type === "agent-switched" }}>
+                            <Show when={message()?.type !== "agent-switched"}>{" · "}</Show>
+                            <bdi dir="auto">{data()}</bdi>
+                          </span>
+                        )}
+                      </Show>
+                    </Dynamic>
                   )}
                 </Show>
               }
@@ -1078,13 +1076,30 @@ export function createSessionTimelineRowRenderer(input: {
         return value?.type === "user" ? value : undefined
       })
 
+      const task = () => {
+        const value = message()
+
+        return value && isSubagentTask(value.metadata) ? value : undefined
+      }
+
       const context = createMemo(() => input.projection.userContextByID().get(current().userMessageID))
       const joined = run(current().userMessageID)
       const grow = arriving(current().userMessageID)
 
       return (
         <Frame row={current()} grow={grow}>
-          <Show when={message()}>
+          <Show when={task()}>
+            {(message) => (
+              <CollapsedMessage
+                label={i18n.t("ui.sessionTimeline.notice.parentTask")}
+                text={message().text}
+                open={!!input.disclosure.value(`notice-open:${message().id}`)}
+                onOpenChange={(open) => input.disclosure.set(`notice-open:${message().id}`, open)}
+                class={padding()}
+              />
+            )}
+          </Show>
+          <Show when={!task() && message()}>
             {(message) => {
               const presentation = () => input.presentation(message())
 
