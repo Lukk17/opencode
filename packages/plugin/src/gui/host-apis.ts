@@ -1596,11 +1596,13 @@ export interface Tabs {
    * server. A session id the server does not know still opens a tab, which shows the app's "session not found" page.
    *
    * @param session - The session's server and id.
-   * @param options - Whether to show the tab.
+   * @param options - Whether to show the tab, or the related session whose tab shows it.
    *
    * @example
    * ```ts
    * ctx.tabs.open({ server: session.server.id, id: session.id }, { focus: true })
+   * // A subagent in the tab that shows its parent; Esc returns to the parent.
+   * ctx.tabs.open({ server: parent.server.id, id: childID }, { from: parent.id })
    * ```
    */
   open(
@@ -1616,6 +1618,12 @@ export interface Tabs {
        * false: the tab opens in the background.
        */
       readonly focus?: boolean
+      /**
+       * The id of a related session on the same server, such as a subagent's parent. The session is shown at once in
+       * the tab that shows `from`, which remembers its parent so Esc returns there; `focus` is ignored. When no open
+       * tab shows `from`, the session is shown without one. Defaults to undefined: the session gets a tab of its own.
+       */
+      readonly from?: string
     },
   ): void
   /**

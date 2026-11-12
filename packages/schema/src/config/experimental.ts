@@ -43,6 +43,9 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),
+  agents_panel_auto_open: Schema.Boolean.pipe(optional).annotate({
+    description: "Open the Agents side panel by itself when subagents start. Defaults to true.",
+  }),
   location_idle_timeout: Schema.Union([Schema.DurationFromString, Schema.Literal(false)])
     .pipe(optional)
     .annotate({

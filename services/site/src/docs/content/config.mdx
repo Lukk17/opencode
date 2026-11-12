@@ -645,6 +645,19 @@ Set `todo` to `true` to give agents a `todowrite` tool for tracking multi-step w
 `subagent_depth` sets how deeply subagents can start their own subagents. Defaults to `1`, so a subagent cannot
 start another subagent.
 
+### Agents panel
+
+Set `agents_panel_auto_open` to `false` to stop the Agents side panel from opening by itself when subagents start.
+Defaults to `true`.
+
+```jsonc
+{
+  "experimental": {
+    "agents_panel_auto_open": false,
+  },
+}
+```
+
 ### Background compaction
 
 Set `background_compaction` to `true` to write the compaction summary in the background before it is needed, so

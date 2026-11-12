@@ -50,6 +50,7 @@
     "./storybook": "./src/storybook/index.ts",
     "./tools/ansi": "./src/tools/ansi.ts",
     "./tools/shell-output": "./src/tools/shell-output.ts",
+    "./todos": "./src/todos.ts",
     "./v2/*.css": "./src/v2/components/*.css",
     "./v2/*": "./src/v2/components/*.tsx"
   },

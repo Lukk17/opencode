@@ -16725,6 +16725,9 @@
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
+              "agents_panel_auto_open": {
+                "type": "boolean"
+              },
               "location_idle_timeout": {
                 "anyOf": [
                   {

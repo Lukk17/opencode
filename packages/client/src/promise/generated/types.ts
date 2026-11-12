@@ -2598,6 +2598,7 @@ export type ConfigEntry =
           part_rows?: boolean
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number
+          agents_panel_auto_open?: boolean
           location_idle_timeout?: string | false
           policies?: Array<{
             action:

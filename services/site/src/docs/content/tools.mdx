@@ -224,6 +224,15 @@ subagent-mode agents can be used, and the default nesting depth is one.
 
 Permission: `subagent` with the selected agent ID as its resource.
 
+In the desktop and web app, the Agents side panel follows a session's subagents.
+It shows how many there are and how many are running, the session's own todo
+list, and one row per subagent, nested ones indented under their parent. Each
+row shows the agent, its task, its status (running, finished, failed, cancelled
+or not started) and its todo progress, such as 3/7. Click a row to open that
+subagent's conversation in the same tab, and press Esc to return to the parent.
+The panel opens by itself the first time a session runs a subagent, and the side
+panel + menu opens it at any time.
+
 ### Execute
 
 `execute` runs JavaScript in Code Mode so the agent can call and combine tools

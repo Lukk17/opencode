@@ -816,7 +816,7 @@ describe("ConfigNormalize", () => {
       agents: {},
       providers: {},
       instructions: [],
-      experimental: { subagent_depth: 0, location_idle_timeout: false },
+      experimental: { subagent_depth: 0, location_idle_timeout: false, agents_panel_auto_open: false },
     })
     expect(result.encoded).toMatchObject({
       snapshots: false,
@@ -825,7 +825,7 @@ describe("ConfigNormalize", () => {
       agents: {},
       providers: {},
       instructions: [],
-      experimental: { subagent_depth: 0, location_idle_timeout: false },
+      experimental: { subagent_depth: 0, location_idle_timeout: false, agents_panel_auto_open: false },
     })
     expect(result.encoded.share).toBeUndefined()
   })

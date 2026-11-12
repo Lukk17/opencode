@@ -55,7 +55,7 @@ import { terminalFontFamily, useSettings } from "@/settings/model"
 import { useSettingsSurface } from "@/settings/surface"
 import { formatKeybindParts, useCommand } from "@/shell/commands/command"
 import { createMediaQuery } from "@solid-primitives/media"
-import { useIsRouting, useLocation } from "@solidjs/router"
+import { useIsRouting, useLocation, useNavigate } from "@solidjs/router"
 import { useLanguage } from "@/runtime/i18n/language"
 import {
   createHostApiAttachState,
@@ -66,6 +66,7 @@ import {
   type HostApiAttachEvent,
 } from "./attach-machine"
 import { closedEntry, createClosedTabs } from "./closed-tabs"
+import { openSessionFrom } from "./open-session"
 import { panelsMoving } from "@/shell/panel-motion"
 import { createEmbeds } from "./embeds"
 import {
@@ -523,6 +524,7 @@ export function createPluginAttachment(apis: HostApis) {
   const host = usePluginHost()
   const command = useCommand()
   const location = useLocation()
+  const navigate = useNavigate()
   const platform = usePlatform()
   const theme = useTheme()
   const menu = createSessionPanelMenu()
@@ -1057,6 +1059,14 @@ export function createPluginAttachment(apis: HostApis) {
 
     if (!conn) return
     const key = ServerConnection.key(conn)
+
+    if (options?.from !== undefined)
+      return openSessionFrom(tabs, navigate, {
+        server: key,
+        from: options.from,
+        id: session.id,
+        parentID: server(session.server)?.data.session.get(session.id)?.parentID,
+      })
     const shown = findSessionTab(tabs.store, key, session.id)
 
     // A tab that already routes the session, e.g. a subagent opened from its parent's tab, keeps its route.

@@ -1,0 +1,18 @@
+export default {
+  "tab.title": "Agents",
+  "mobile.title": "Agents",
+  "menu.count.one": "{{count}} agent",
+  "menu.count.other": "{{count}} agents",
+  "header.count.one": "{{count}} agent",
+  "header.count.other": "{{count}} agents",
+  "header.running": "{{count}} running",
+  "todos.title": "Todos",
+  "empty": "No subagents yet",
+  "untitled": "Untitled task",
+  "status.running": "Running",
+  "status.finished": "Finished",
+  "status.failed": "Failed",
+  "status.cancelled": "Cancelled",
+  "status.notStarted": "Not started",
+  "todo.progress": "{{done}}/{{total}} todos done",
+}
