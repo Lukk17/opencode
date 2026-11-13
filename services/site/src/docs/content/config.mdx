@@ -640,6 +640,11 @@ All experimental settings live under the `experimental` key:
 
 Set `todo` to `true` to give agents a `todowrite` tool for tracking multi-step work. Defaults to `false`.
 
+When the latest todo list still has items that are not completed or cancelled, and the agent has not called
+`todowrite` in its last 5 steps, OpenCode adds a short reminder at the end of the agent's next request asking it to
+update the list. The reminder is never stored in the session history, and compaction, title and other side requests
+never get it.
+
 ### Subagent depth
 
 `subagent_depth` sets how deeply subagents can start their own subagents. Defaults to `1`, so a subagent cannot
